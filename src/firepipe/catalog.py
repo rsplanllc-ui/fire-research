@@ -73,3 +73,27 @@ def stratified_split(fires: pd.DataFrame, test_fraction: float, by: list[str], s
             pick = rng.choice(idx, size=k, replace=False)
             split.loc[pick] = "test"
     return split
+
+
+def find_duplicates(fires: pd.DataFrame, max_km: float = 3.0) -> list[tuple[str, str, float]]:
+    """中心相距 ≤ max_km 且起止日期有重叠的火场对，视为同一场火。返回 (保留, 排除, 距离)。"""
+    f = fires.dropna(subset=["center_lat", "center_lon", "ignition_date", "end_date"]).copy()
+    f = f.sort_values("fire_id").reset_index(drop=True)
+    for c in ("ignition_date", "end_date"):
+        f[c] = pd.to_datetime(f[c])
+    out, dropped = [], set()
+    for i in range(len(f)):
+        a = f.loc[i]
+        if a.fire_id in dropped:
+            continue
+        for j in range(i + 1, len(f)):
+            b = f.loc[j]
+            if b.fire_id in dropped:
+                continue
+            km = 111.0 * np.hypot(a.center_lat - b.center_lat,
+                                  (a.center_lon - b.center_lon) * np.cos(np.radians(a.center_lat)))
+            overlap = a.ignition_date <= b.end_date and b.ignition_date <= a.end_date
+            if km <= max_km and overlap:
+                out.append((a.fire_id, b.fire_id, float(km)))
+                dropped.add(b.fire_id)
+    return out

@@ -206,6 +206,13 @@ def _source(k: str) -> str:
 def process_queue(cfg: dict, db: DB, limit: int = 20) -> list[dict]:
     """处理所有“待处理且资料齐全、尚未用当前版本生成过数据”的火场。"""
     ver = cfg["pipeline_version"]
+    from . import catalog
+    allf = pd.DataFrame(db.select("fires", {"qc_status": "neq.excluded", "select": "*"}))
+    if not allf.empty:
+        for keep, drop, km in catalog.find_duplicates(allf):
+            db.update("fires", {"fire_id": drop},
+                      {"qc_status": "excluded",
+                       "qc_notes": f"与 {keep} 为同一场火（中心相距 {km:.2f} km、日期重叠），已排除避免重复"})
     fires = db.select("fires", {"qc_status": "eq.pending", "select": "*"})
     done = {a["fire_id"] for a in db.select("data_assets", {"variable": "eq.samples",
                                                             "pipeline_version": f"eq.{ver}",

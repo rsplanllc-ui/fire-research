@@ -146,3 +146,12 @@ def test_http_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(http.requests, "get", flaky)
     monkeypatch.setattr(http.time, "sleep", lambda s: None)
     assert http.get("https://x").text == "ok" and calls["n"] == 3
+
+
+def test_find_duplicates():
+    f = pd.DataFrame({"fire_id": ["A", "B", "C"], "center_lat": [26.266, 26.2716, 26.266],
+                      "center_lon": [113.272, 113.273, 113.272],
+                      "ignition_date": ["2022-10-17", "2022-10-17", "2022-12-01"],
+                      "end_date": ["2022-10-23", "2022-10-23", "2022-12-03"]})
+    d = catalog.find_duplicates(f)
+    assert [(a, b) for a, b, _ in d] == [("A", "B")]     # C 同地不同时，不算重复
