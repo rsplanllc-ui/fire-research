@@ -19,7 +19,7 @@ SOURCES = ["VIIRS_SNPP_SP", "VIIRS_NOAA20_SP"]
 
 
 def fetch(bbox, start: date, end: date, sources=SOURCES, key: str | None = None) -> pd.DataFrame:
-    key = key or os.environ["FIRMS_MAP_KEY"]
+    key = (key or os.environ["FIRMS_MAP_KEY"]).strip()
     area = ",".join(f"{v:.4f}" for v in bbox)          # 西,南,东,北
     parts = []
     for src in sources:

@@ -19,8 +19,8 @@ BUCKET = "fire-data"
 
 class DB:
     def __init__(self, url: str | None = None, key: str | None = None, timeout: int = 60):
-        self.url = (url or os.environ["SUPABASE_URL"]).rstrip("/")
-        key = key or os.environ["SUPABASE_SERVICE_KEY"]
+        self.url = (url or os.environ["SUPABASE_URL"]).strip().rstrip("/")   # 去掉粘贴时带进来的空格/换行
+        key = (key or os.environ["SUPABASE_SERVICE_KEY"]).strip()
         self.h = {"apikey": key, "Authorization": f"Bearer {key}"}
         self.timeout = timeout
 
