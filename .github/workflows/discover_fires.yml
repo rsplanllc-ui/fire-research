@@ -22,6 +22,8 @@ on:
         description: "同时给名单里已有坐标、缺日期的火场补日期（yes/no）"
         default: "no"
 
+concurrency: discover
+
 jobs:
   discover:
     runs-on: ubuntu-latest

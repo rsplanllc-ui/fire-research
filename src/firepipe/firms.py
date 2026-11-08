@@ -45,6 +45,8 @@ def cluster_events(pts: pd.DataFrame, dist_km: float = 1.5, gap_days: int = 2,
                    min_points: int = 5, drop_low_conf: bool = True) -> pd.DataFrame:
     """时空聚类：相距 ≤ dist_km 且日期相差 ≤ gap_days 的火点算同一场火（连通分量）。"""
     p = pts.copy()
+    if "type" in p:                      # 0=植被火；2=工厂等固定热源；3=海上
+        p = p[pd.to_numeric(p["type"], errors="coerce").fillna(0) == 0]
     if drop_low_conf and "confidence" in p:
         p = p[p["confidence"].astype(str).str.lower().str[0] != "l"]
     if p.empty:
@@ -70,7 +72,8 @@ def cluster_events(pts: pd.DataFrame, dist_km: float = 1.5, gap_days: int = 2,
                                 center_lat=("latitude", "mean"), center_lon=("longitude", "mean"),
                                 ignition_date=("acq_date", "min"), end_date=("acq_date", "max"),
                                 west=("longitude", "min"), east=("longitude", "max"),
-                                south=("latitude", "min"), north=("latitude", "max"))
+                                south=("latitude", "min"), north=("latitude", "max"),
+                                frp_sum=("frp", "sum") if "frp" in p else ("latitude", "size"))
     ev = ev[ev["n_points"] >= min_points].sort_values("ignition_date").reset_index(drop=True)
     ev["duration_days"] = [(b - a).days + 1 for a, b in zip(ev["ignition_date"], ev["end_date"])]
     return ev
