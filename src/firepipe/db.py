@@ -25,27 +25,34 @@ class DB:
         self.timeout = timeout
 
     # ---------- 表 ----------
+    @staticmethod
+    def _check(r):
+        if not r.ok:
+            raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text[:1000]}", response=r)
+
     def select(self, table: str, params: dict | None = None) -> list[dict]:
         r = requests.get(f"{self.url}/rest/v1/{table}", headers=self.h,
                          params=params or {}, timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r)
         return r.json()
 
     def upsert(self, table: str, rows: list[dict] | dict, on_conflict: str | None = None) -> list[dict]:
         rows = rows if isinstance(rows, list) else [rows]
+        keys = sorted({k for r in rows for k in r})          # 批量写入要求每行字段一致
+        rows = [{k: r.get(k) for k in keys} for r in rows]
         h = {**self.h, "Content-Type": "application/json",
              "Prefer": "resolution=merge-duplicates,return=representation"}
         params = {"on_conflict": on_conflict} if on_conflict else {}
         r = requests.post(f"{self.url}/rest/v1/{table}", headers=h, params=params,
                           data=json.dumps(rows, default=str), timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r)
         return r.json()
 
     def insert(self, table: str, row: dict) -> dict:
         h = {**self.h, "Content-Type": "application/json", "Prefer": "return=representation"}
         r = requests.post(f"{self.url}/rest/v1/{table}", headers=h,
                           data=json.dumps(row, default=str), timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r)
         return r.json()[0]
 
     def update(self, table: str, match: dict, values: dict) -> list[dict]:
@@ -53,7 +60,7 @@ class DB:
         params = {k: f"eq.{v}" for k, v in match.items()}
         r = requests.patch(f"{self.url}/rest/v1/{table}", headers=h, params=params,
                            data=json.dumps(values, default=str), timeout=self.timeout)
-        r.raise_for_status()
+        self._check(r)
         return r.json()
 
     # ---------- 文件 ----------
@@ -62,13 +69,13 @@ class DB:
         h = {**self.h, "Content-Type": content_type, "x-upsert": "true"}
         r = requests.post(f"{self.url}/storage/v1/object/{BUCKET}/{remote}", headers=h,
                           data=data, timeout=max(self.timeout, 300))
-        r.raise_for_status()
+        self._check(r)
         return remote
 
     def download(self, remote: str, local: str | Path) -> Path:
         r = requests.get(f"{self.url}/storage/v1/object/{BUCKET}/{remote}", headers=self.h,
                          timeout=max(self.timeout, 300))
-        r.raise_for_status()
+        self._check(r)
         Path(local).parent.mkdir(parents=True, exist_ok=True)
         Path(local).write_bytes(r.content)
         return Path(local)

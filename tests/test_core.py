@@ -93,3 +93,25 @@ def test_grouped_cv_never_leaks_fire():
     assert out["ridge"]["summary"]["r2_median"] > out["mean_baseline"]["summary"]["r2_median"]
     oof = grouped_cv(df, ["slope"], "dnbr_offset", "ridge", 4)
     assert oof["pred"].notna().all()
+
+
+def test_upsert_normalizes_keys(monkeypatch):
+    import json as _json
+
+    from firepipe import db as dbmod
+    sent = {}
+
+    class R:
+        ok = True
+        def json(self):
+            return []
+
+    def fake_post(url, headers=None, params=None, data=None, timeout=None):
+        sent["rows"] = _json.loads(data)
+        return R()
+
+    monkeypatch.setattr(dbmod.requests, "post", fake_post)
+    d = dbmod.DB("https://x.supabase.co\n", " k\n")
+    assert d.url == "https://x.supabase.co"
+    d.upsert("data_assets", [{"a": 1, "b": 2}, {"a": 3}])
+    assert all(set(r) == {"a", "b"} for r in sent["rows"])
