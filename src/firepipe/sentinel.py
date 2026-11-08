@@ -61,21 +61,27 @@ def _fix_href(item):
     return item
 
 
-def search(cfg: dict, bbox, datetime_range: str):
+def search(cfg: dict, bbox, datetime_range: str, max_cloud: float | None = None):
     from pystac_client import Client
     c = Client.open(cfg["sentinel2"]["stac_url"])
     items = c.search(collections=[cfg["sentinel2"]["collection"]], bbox=bbox,
                      datetime=datetime_range,
-                     query={"eo:cloud_cover": {"lt": cfg["sentinel2"]["max_scene_cloud"]}}).item_collection()
+                     query={"eo:cloud_cover": {"lt": max_cloud or cfg["sentinel2"]["max_scene_cloud"]}}).item_collection()
     return [_fix_href(i) for i in items]
 
 
-def load_composite(cfg: dict, grid, datetime_range: str) -> tuple[xr.Dataset, dict]:
-    """读取窗口内所有影像 → SCL 逐像元去云 → 反射率换算 → 中位数合成。"""
+def load_composite(cfg: dict, grid, datetime_range: str, fallback_range: str | None = None) -> tuple[xr.Dataset, dict]:
+    """读取窗口内所有影像 → SCL 逐像元去云 → 反射率换算 → 中位数合成。
+    标准窗口内没有影像时，用放宽的窗口和云量上限再找一次，并在质检记录里注明。"""
     import odc.stac
 
     items = search(cfg, grid.bbox_lonlat, datetime_range)
-    meta = {"n_scenes": len(items), "dates": sorted({i.datetime.date().isoformat() for i in items})}
+    relaxed = False
+    if not items and fallback_range:
+        items = search(cfg, grid.bbox_lonlat, fallback_range, max_cloud=95)
+        relaxed = True
+    meta = {"n_scenes": len(items), "dates": sorted({i.datetime.date().isoformat() for i in items}),
+            "window_relaxed": relaxed}
     if not items:
         raise RuntimeError(f"{datetime_range} 内没有可用的 Sentinel-2 影像")
 
@@ -107,8 +113,10 @@ def load_composite(cfg: dict, grid, datetime_range: str) -> tuple[xr.Dataset, di
 def build_spectral(cfg: dict, grid, fire: dict) -> tuple[dict[str, xr.DataArray], dict]:
     ign = fire["ignition_date"] if isinstance(fire["ignition_date"], date) else date.fromisoformat(str(fire["ignition_date"]))
     end = fire["end_date"] if isinstance(fire["end_date"], date) else date.fromisoformat(str(fire["end_date"]))
-    pre, mpre = load_composite(cfg, grid, _window(ign, cfg["sentinel2"]["pre_window_days"]))
-    post, mpost = load_composite(cfg, grid, _window(end, cfg["sentinel2"]["post_window_days"]))
+    pre, mpre = load_composite(cfg, grid, _window(ign, cfg["sentinel2"]["pre_window_days"]),
+                               _window(ign, cfg["sentinel2"]["pre_window_fallback"]))
+    post, mpost = load_composite(cfg, grid, _window(end, cfg["sentinel2"]["post_window_days"]),
+                                 _window(end, cfg["sentinel2"]["post_window_fallback"]))
 
     nbr_pre = nbr(pre.nir08, pre.swir22)
     nbr_post = nbr(post.nir08, post.swir22)

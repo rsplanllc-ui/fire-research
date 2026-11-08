@@ -128,6 +128,8 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     spec, smeta = sentinel.build_spectral(cfg, grid, fire)
     qc["sentinel"] = smeta
     for k in ("pre", "post"):
+        if smeta[k].get("window_relaxed"):
+            qc["notes"].append(f"{k} 影像窗口已放宽")
         if smeta[k]["valid_fraction"] < cfg["sentinel2"]["min_valid_fraction"]:
             qc["issues"].append(f"{k} 合成有效像元比例 {smeta[k]['valid_fraction']:.2f} 偏低")
 
