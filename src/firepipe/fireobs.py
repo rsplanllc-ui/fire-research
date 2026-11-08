@@ -55,8 +55,10 @@ def burn_day_weather(burn_day: np.ndarray, daily: pd.DataFrame, ignition: date) 
     bd = np.nan_to_num(burn_day, nan=0).astype(int)
     lookup = np.vectorize(lambda v: idx.get(v, idx.get(min(idx, key=lambda k: abs(k - v)))))
     rows = lookup(bd)
-    for col, name in [("tmax", "bd_tmax"), ("rhmin", "bd_rhmin"), ("windmax", "bd_windmax"),
-                      ("vpdmax", "bd_vpdmax")]:
+    pairs = [("tmax", "bd_tmax"), ("rhmin", "bd_rhmin"), ("windmax", "bd_windmax"), ("vpdmax", "bd_vpdmax")]
+    if "winddir" in daily:
+        pairs.append(("winddir", "bd_winddir"))
+    for col, name in pairs:
         vals = daily[col].to_numpy(dtype="float32")
         arr = vals[rows]
         arr[~np.isfinite(burn_day)] = np.nan
@@ -79,3 +81,78 @@ def context_layers(layers: dict[str, np.ndarray], res_m: float, radius_m: float 
     ndvi = layers["ndvi_pre"]
     sd = np.sqrt(np.maximum(nanmean(ndvi ** 2) - nanmean(ndvi) ** 2, 0))
     return {"nbr_pre_mean300": m.astype("float32"), "ndvi_pre_sd300": sd.astype("float32")}
+
+
+def _ang_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """两个方位角（度）的夹角，0–180。"""
+    d = np.abs((a - b + 180) % 360 - 180)
+    return d.astype("float32")
+
+
+def fire_behavior_layers(hs: pd.DataFrame, shape: tuple, res_m: float, ignition: date,
+                         aspect_deg: np.ndarray, slope_deg: np.ndarray,
+                         bd_winddir: np.ndarray | None, bd_windmax: np.ndarray | None,
+                         search_m: float = 3000) -> dict[str, np.ndarray]:
+    """火行为因子：让气象在火场内部产生空间差异。
+
+    - aspect_wind_angle：坡向与“风去的方向”的夹角。0 表示风正往这面坡上吹（迎风坡，顺风上坡），180 表示背风坡。
+    - wind_slope_index：风速 × cos(夹角) × tan(坡度)，顺风上坡为正、背风下坡为负。
+    - spread_dir：火到达这个像元的方向（从更早的火点指向这里的方位角）。
+    - spread_aspect_angle / spread_wind_angle：蔓延方向与坡向（上坡方向）、风向的夹角。
+    - spread_speed：相邻两次观测之间的蔓延速度（m/h）。
+
+    hs 需要列 row, col, acq_date, acq_time(HHMM), frp。蔓延方向对每个火点找它之前（≥1 小时）最近的火点。
+    """
+    out = {}
+    nan = lambda: np.full(shape, np.nan, "float32")
+    upslope = (aspect_deg + 180) % 360               # 坡向是坡面朝向（下坡方向），上坡方向加 180
+    # 1) 坡向-风向夹角、风坡指数（逐像元，用燃烧当天风向）
+    if bd_winddir is not None and bd_windmax is not None:
+        wind_to = (bd_winddir + 180) % 360           # 气象风向是风来的方向，火被推向相反方向
+        ang = _ang_diff(upslope, wind_to)
+        out["aspect_wind_angle"] = ang
+        out["wind_slope_index"] = (bd_windmax * np.cos(np.radians(ang)) * np.tan(np.radians(slope_deg))).astype("float32")
+    else:
+        out["aspect_wind_angle"], out["wind_slope_index"] = nan(), nan()
+    # 2) 蔓延方向与速度：按火点时序
+    ok = (hs["row"] >= 0) & (hs["row"] < shape[0]) & (hs["col"] >= 0) & (hs["col"] < shape[1])
+    h = hs[ok].copy()
+    if len(h) < 2:
+        for k in ("spread_dir", "spread_aspect_angle", "spread_wind_angle", "spread_speed"):
+            out[k] = nan()
+        return out
+    t = h["acq_time"].fillna(0).astype(int)
+    hours = np.array([(d - ignition).days * 24 for d in h["acq_date"]], "float64") + (t // 100) + (t % 100) / 60.0
+    r, c = h["row"].values.astype(float), h["col"].values.astype(float)
+    n = len(h)
+    sdir = np.full(n, np.nan); sspd = np.full(n, np.nan)
+    search_px = search_m / res_m
+    for i in range(n):
+        prev = np.where(hours <= hours[i] - 1.0)[0]
+        if len(prev) == 0:
+            continue
+        d = np.hypot(r[prev] - r[i], c[prev] - c[i])
+        j = prev[np.argmin(d)]
+        if d.min() > search_px or d.min() == 0:
+            continue
+        dr, dc = r[i] - r[j], c[i] - c[j]          # 行向下为南
+        sdir[i] = (np.degrees(np.arctan2(dc, -dr)) + 360) % 360
+        sspd[i] = d.min() * res_m / max(hours[i] - hours[j], 1.0)
+    # 把每个像元归到最近的火点，取该火点的蔓延方向/速度
+    cnt = np.zeros(shape, bool)
+    cnt[h["row"].values, h["col"].values] = True
+    _, (ir, ic) = ndimage.distance_transform_edt(~cnt, return_indices=True)
+    g_dir = np.full(shape, np.nan, "float32"); g_spd = np.full(shape, np.nan, "float32")
+    # 同一像元多个火点：取有方向的最后一个
+    for k in range(n):
+        if np.isfinite(sdir[k]):
+            g_dir[int(r[k]), int(c[k])] = sdir[k]; g_spd[int(r[k]), int(c[k])] = sspd[k]
+    out["spread_dir"] = g_dir[ir, ic]
+    out["spread_speed"] = g_spd[ir, ic]
+    out["spread_aspect_angle"] = np.where(np.isfinite(out["spread_dir"]), _ang_diff(out["spread_dir"], upslope), np.nan).astype("float32")
+    if bd_winddir is not None:
+        wind_to = (bd_winddir + 180) % 360
+        out["spread_wind_angle"] = np.where(np.isfinite(out["spread_dir"]), _ang_diff(out["spread_dir"], wind_to), np.nan).astype("float32")
+    else:
+        out["spread_wind_angle"] = nan()
+    return out

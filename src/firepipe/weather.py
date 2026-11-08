@@ -12,8 +12,18 @@ import numpy as np
 import pandas as pd
 from . import http
 
-HOURLY = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m",
+HOURLY = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m", "wind_direction_10m",
           "vapour_pressure_deficit", "precipitation", "soil_moisture_0_to_7cm"]
+
+
+def _daily_wind(df: pd.DataFrame) -> pd.DataFrame:
+    """逐日：最大风速，以及风速最大那一小时的风向（度，风从哪边吹来）。"""
+    def pick(g):
+        if g["wind_speed_10m"].notna().any():
+            i = g["wind_speed_10m"].idxmax()
+            return pd.Series({"windmax": g.loc[i, "wind_speed_10m"], "winddir": g.loc[i, "wind_direction_10m"]})
+        return pd.Series({"windmax": np.nan, "winddir": np.nan})
+    return df.groupby(df.index.floor("D")).apply(pick)
 
 
 def fetch_points(cfg: dict, lats, lons, start: date, end: date) -> list[pd.DataFrame]:
@@ -36,6 +46,18 @@ def fetch_points(cfg: dict, lats, lons, start: date, end: date) -> list[pd.DataF
     return out
 
 
+def _dominant_winddir(h: pd.DataFrame) -> float:
+    """火灾期间风速加权的平均风向（度，风来的方向）。"""
+    if "wind_direction_10m" not in h:
+        return np.nan
+    sp, di = h["wind_speed_10m"].to_numpy(float), h["wind_direction_10m"].to_numpy(float)
+    ok = np.isfinite(sp) & np.isfinite(di)
+    if not ok.any():
+        return np.nan
+    u = np.sum(sp[ok] * np.sin(np.radians(di[ok]))); v = np.sum(sp[ok] * np.cos(np.radians(di[ok])))
+    return float((np.degrees(np.arctan2(u, v)) + 360) % 360)
+
+
 def summarize(df: pd.DataFrame, ign: date, end: date, ante: list[int]) -> dict:
     g = df.resample("D")
     d = pd.DataFrame({"temperature_2m": g["temperature_2m"].max(), "relative_humidity_2m": g["relative_humidity_2m"].min(),
@@ -49,6 +71,8 @@ def summarize(df: pd.DataFrame, ign: date, end: date, ante: list[int]) -> dict:
         "fire_rhmin": fire["relative_humidity_2m"].min(),
         "fire_windmax": fire["wind_speed_10m"].max(),
         "fire_vpdmax": fire["vapour_pressure_deficit"].max(),
+        "_wd_sin": np.sin(np.radians(_dominant_winddir(df.loc[str(ign):str(end + timedelta(days=1))]))),
+        "_wd_cos": np.cos(np.radians(_dominant_winddir(df.loc[str(ign):str(end + timedelta(days=1))]))),
         "soilm_7d": before["soil_moisture_0_to_7cm"].tail(7).mean(),
         "dry_days_30d": (int((before["precipitation"].tail(30) < 1.0).sum())
                          if before["precipitation"].tail(30).notna().all() else np.nan),
@@ -70,7 +94,10 @@ def build_weather(cfg: dict, grid, fire: dict) -> dict:
     dfs = fetch_points(cfg, LA.ravel(), LO.ravel(), ign - timedelta(days=max(ante)), end)
     pts = pd.DataFrame([summarize(df, ign, end, ante) for df in dfs])
     pts["lon"], pts["lat"] = LO.ravel(), LA.ravel()
-    return idw_to_grid(pts, grid)
+    out = idw_to_grid(pts, grid)
+    sn, cs = out.pop("_wd_sin"), out.pop("_wd_cos")     # 风向按单位向量插值，再换回角度
+    out["fire_winddir"] = ((np.degrees(np.arctan2(sn, cs)) + 360) % 360).astype("float32")
+    return out
 
 
 def idw_to_grid(pts: pd.DataFrame, grid, power: float = 2.0) -> dict:
@@ -99,6 +126,9 @@ def fire_daily(cfg: dict, fire: dict) -> pd.DataFrame:
     df = fetch_points(cfg, [float(fire["center_lat"])], [float(fire["center_lon"])],
                       ign - timedelta(days=1), end + timedelta(days=1))[0]
     d = df.resample("D").agg({"temperature_2m": "max", "relative_humidity_2m": "min",
-                              "wind_speed_10m": "max", "vapour_pressure_deficit": "max"})
-    d.columns = ["tmax", "rhmin", "windmax", "vpdmax"]
-    return d
+                              "vapour_pressure_deficit": "max"})
+    d.columns = ["tmax", "rhmin", "vpdmax"]
+    w = _daily_wind(df)
+    d["windmax"] = w["windmax"].reindex(d.index).values
+    d["winddir"] = w["winddir"].reindex(d.index).values
+    return d[["tmax", "rhmin", "windmax", "vpdmax", "winddir"]]

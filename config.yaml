@@ -1,5 +1,5 @@
 # 火场研究流水线配置。改这里，不要在代码里写死参数。
-pipeline_version: "v1.4"   # v1.4：不再使用 STAC 元数据中错误的 -0.1 偏移；v1.3：修复暗像元 NDVI/EVI 缺失、风速与降水缺失； v1.1：火点约束火烧范围；v1.2：森林过滤、火中观测与燃烧当天天气、邻域植被
+pipeline_version: "v1.5"   # v1.4：不再使用 STAC 元数据中错误的 -0.1 偏移；v1.3：修复暗像元 NDVI/EVI 缺失、风速与降水缺失； v1.1：火点约束火烧范围；v1.2：森林过滤、火中观测与燃烧当天天气、邻域植被
 
 grid:
   resolution_m: 30          # 统一网格分辨率
@@ -81,14 +81,15 @@ model:
     vegetation: ["nbr_pre", "ndvi_pre", "evi_pre", "ndmi_pre", "nbr_pre_mean300", "ndvi_pre_sd300"]
     terrain: ["elevation", "slope", "northness", "eastness", "tpi", "twi"]
     landcover: ["worldcover"]
-    weather_fire: ["fire_tmax", "fire_rhmin", "fire_windmax", "fire_vpdmax"]
+    weather_fire: ["fire_tmax", "fire_rhmin", "fire_windmax", "fire_vpdmax", aspect_firewind_angle, firewind_slope_index]
     weather_antecedent: ["prcp_7d", "prcp_30d", "prcp_90d", "dry_days_30d", "soilm_7d"]
     # 火中观测（VIIRS 火点）——不是火前信息，单独作为一个情景报告
     fire_obs: ["hs_dist", "hs_count_750", "hs_frp_max_750", "hs_frp_nearest", "burn_day",
                "bd_tmax", "bd_rhmin", "bd_windmax", "bd_vpdmax"]
+    fire_behavior: [bd_winddir, aspect_wind_angle, wind_slope_index, spread_dir, spread_aspect_angle, spread_wind_angle, spread_speed]
   scenarios:
     prefire: ["vegetation", "terrain", "landcover", "weather_fire", "weather_antecedent"]
-    with_fire_obs: ["vegetation", "terrain", "landcover", "weather_fire", "weather_antecedent", "fire_obs"]
+    with_fire_obs: ["vegetation", "terrain", "landcover", "weather_fire", "weather_antecedent", "fire_obs", fire_behavior]
   algorithms: ["mean_baseline", "ridge", "random_forest", "lightgbm"]
   cv_folds: 5
   acceptance_r2: 0.90       # 导师标准：封存测试火场逐场 R²

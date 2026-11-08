@@ -72,7 +72,7 @@ def cmd_split(args, cfg, db):
 
 
 def cmd_process(args, cfg, db):
-    res = build.process_queue(cfg, db, args.limit, args.shard, args.nshards)
+    res = build.process_queue(cfg, db, args.limit, args.shard, args.nshards, args.split or None)
     print(json.dumps(res, ensure_ascii=False, indent=1, default=str)[:5000])
 
 
@@ -244,6 +244,7 @@ def main(argv=None):
     a = sub.add_parser("split"); a.add_argument("--lock", action="store_true"); a.set_defaults(f=cmd_split)
     a = sub.add_parser("process"); a.add_argument("--limit", type=int, default=20)
     a.add_argument("--shard", type=int, default=0); a.add_argument("--nshards", type=int, default=1)
+    a.add_argument("--split", default="", help="只处理某个划分（dev / test），留空为全部")
     a.set_defaults(f=cmd_process)
     a = sub.add_parser("train"); a.add_argument("--groups", nargs="*"); a.add_argument("--algos", nargs="*")
     a.add_argument("--scenario")

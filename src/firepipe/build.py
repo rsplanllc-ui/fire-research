@@ -68,6 +68,8 @@ def _hotspots(cfg, grid, fire, to_utm, inv, qc):
         rows = inv.d * x + inv.e * y + inv.f
         out = pd.DataFrame({"row": np.floor(rows).astype(int), "col": np.floor(cols).astype(int),
                             "acq_date": pts["acq_date"].values,
+                            "acq_time": pd.to_numeric(pts.get("acq_time", pd.Series(0, index=pts.index)),
+                                                      errors="coerce").fillna(0).values,
                             "frp": pd.to_numeric(pts.get("frp", pd.Series(np.nan, index=pts.index)),
                                                  errors="coerce").values})
         return out
@@ -176,6 +178,13 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     for k, v in weather.build_weather(cfg, grid, fire).items():
         layers[k] = v.values.astype("float32")
     layers.update(fireobs.context_layers(layers, res))
+    # 火前可得的风坡因子：用火灾期间主导风向（预测时相当于天气预报）
+    aspect = (np.degrees(np.arctan2(layers["eastness"], layers["northness"])) + 360) % 360
+    if "fire_winddir" in layers:
+        ang = fireobs._ang_diff((aspect + 180) % 360, (layers["fire_winddir"] + 180) % 360)
+        layers["aspect_firewind_angle"] = ang
+        layers["firewind_slope_index"] = (layers["fire_windmax"] * np.cos(np.radians(ang))
+                                          * np.tan(np.radians(layers["slope"]))).astype("float32")
 
     # 火中观测（火点）+ 燃烧当天天气
     from datetime import date as _date
@@ -186,6 +195,9 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
             layers.update(fireobs.burn_day_weather(layers["burn_day"], weather.fire_daily(cfg, fire), ign))
         except Exception as e:
             qc["notes"].append(f"燃烧当天天气读取失败：{e}")
+        layers.update(fireobs.fire_behavior_layers(
+            hs, perim.shape, res, ign, aspect, layers["slope"],
+            layers.get("bd_winddir"), layers.get("bd_windmax"), cfg["burn"].get("spread_search_m", 3000)))
 
     shapes = {k: v.shape for k, v in layers.items()}
     if len(set(shapes.values())) != 1:
@@ -251,6 +263,10 @@ def _source(k: str) -> str:
         return "NASA FIRMS VIIRS 375 m"
     if k.startswith("bd_"):
         return "ERA5-Land via Open-Meteo（燃烧当天）"
+    if k.startswith("spread_") or k in {"aspect_wind_angle", "wind_slope_index"}:
+        return "火点时序 + DEM + 燃烧当天风向（派生）"
+    if k in {"aspect_firewind_angle", "firewind_slope_index"}:
+        return "DEM + 火灾期间主导风向（派生）"
     if k in {"elevation", "slope", "northness", "eastness", "tpi", "twi"}:
         return "cop-dem-glo-30"
     if k == "worldcover":
@@ -260,7 +276,8 @@ def _source(k: str) -> str:
     return "sentinel-2-l2a (Earth Search)"
 
 
-def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: int = 1) -> list[dict]:
+def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: int = 1,
+                  split: str | None = None) -> list[dict]:
     """处理所有“待处理且资料齐全、尚未用当前版本生成过数据”的火场。"""
     ver = cfg["pipeline_version"]
     from . import catalog
@@ -274,6 +291,8 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
     done = {a["fire_id"] for a in db.select("data_assets", {"variable": "eq.samples",
                                                             "pipeline_version": f"eq.{ver}",
                                                             "select": "fire_id"})}
+    if split:                                   # 只处理某个划分（如 dev），省算力；测试集留到要用时再做
+        fires = [f for f in fires if f.get("split") == split]
     todo = [f for f in fires if f["fire_id"] not in done
             and all(f.get(k) for k in ("ignition_date", "end_date", "center_lat", "center_lon"))
             and zlib.crc32(f["fire_id"].encode()) % nshards == shard][:limit]

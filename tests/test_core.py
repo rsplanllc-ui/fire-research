@@ -196,9 +196,31 @@ def test_weather_summary_keeps_missing_as_missing():
     idx = pd.date_range("2022-07-01", "2022-10-20 23:00", freq="h")
     df = pd.DataFrame({"temperature_2m": 25.0, "relative_humidity_2m": 40.0, "wind_speed_10m": 10.0,
                        "vapour_pressure_deficit": 1.5, "precipitation": np.nan,
-                       "soil_moisture_0_to_7cm": 0.3}, index=idx)
+                       "soil_moisture_0_to_7cm": 0.3, "wind_direction_10m": 270.0}, index=idx)
     out = summarize(df, date(2022, 10, 17), date(2022, 10, 19), [7, 30])
     assert np.isnan(out["prcp_30d"]) and np.isnan(out["dry_days_30d"]) and out["fire_windmax"] == 10
+    assert out["_wd_sin"] == pytest.approx(-1.0) and abs(out["_wd_cos"]) < 1e-9
     df["precipitation"] = 0.5
     out = summarize(df, date(2022, 10, 17), date(2022, 10, 19), [7, 30])
     assert out["prcp_7d"] == pytest.approx(84) and out["dry_days_30d"] == 0
+
+
+def test_fire_behavior_layers():
+    from datetime import date
+    from firepipe import fireobs
+    hs = pd.DataFrame({"row": [10, 10, 10], "col": [10, 20, 30], "acq_date": [date(2022, 10, 17)] * 3,
+                       "acq_time": [100, 1300, 1400], "frp": [5, 5, 5]})
+    shape = (40, 40)
+    aspect = np.full(shape, 270.0, "float32")        # 坡面朝西 → 上坡方向为东(90°)
+    slope = np.full(shape, 20.0, "float32")
+    winddir = np.full(shape, 270.0, "float32")       # 西风：风从西来，往东吹
+    windmax = np.full(shape, 20.0, "float32")
+    L = fireobs.fire_behavior_layers(hs, shape, 30, date(2022, 10, 17), aspect, slope, winddir, windmax)
+    assert abs(L["aspect_wind_angle"][0, 0]) < 1e-3          # 风正往上坡吹
+    assert L["wind_slope_index"][0, 0] > 0
+    assert abs(L["spread_dir"][10, 20] - 90) < 1e-3          # 火从西往东蔓延
+    assert abs(L["spread_aspect_angle"][10, 20]) < 1e-3
+    assert abs(L["spread_wind_angle"][10, 20]) < 1e-3
+    assert abs(L["spread_speed"][10, 20] - 300 / 12) < 1e-3   # 10 像元×30 m / 12 小时
+    assert np.isnan(L["spread_dir"][10, 10])                  # 第一个火点没有上一时刻
+    assert abs(fireobs._ang_diff(np.array([350.0]), np.array([10.0]))[0] - 20) < 1e-6
