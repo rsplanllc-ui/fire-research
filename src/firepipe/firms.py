@@ -12,7 +12,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
-import requests
+from . import http
 
 API = "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{src}/{area}/{days}/{date}"
 SOURCES = ["VIIRS_SNPP_SP", "VIIRS_NOAA20_SP"]
@@ -26,7 +26,7 @@ def fetch(bbox, start: date, end: date, sources=SOURCES, key: str | None = None)
         d = start
         while d <= end:
             n = min(5, (end - d).days + 1)
-            r = requests.get(API.format(key=key, src=src, area=area, days=n, date=d.isoformat()), timeout=120)
+            r = http.get(API.format(key=key, src=src, area=area, days=n, date=d.isoformat()))
             r.raise_for_status()
             if r.text.strip() and not r.text.lower().startswith("invalid"):
                 df = pd.read_csv(io.StringIO(r.text))

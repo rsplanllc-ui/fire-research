@@ -127,3 +127,22 @@ def test_hotspot_perimeter_removes_drought_background():
     assert abs(bg - 0.25) < 0.02
     assert p[100, 100] and not p[20, 170] and not p[160, 40]
     assert 0.7 < p.sum() / (40 * 50) < 1.3
+
+
+def test_http_retries_then_succeeds(monkeypatch):
+    from firepipe import http
+    calls = {"n": 0}
+
+    class R:
+        status_code = 200
+        text = "ok"
+
+    def flaky(url, params=None, timeout=None, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise http.requests.Timeout("slow")
+        return R()
+
+    monkeypatch.setattr(http.requests, "get", flaky)
+    monkeypatch.setattr(http.time, "sleep", lambda s: None)
+    assert http.get("https://x").text == "ok" and calls["n"] == 3

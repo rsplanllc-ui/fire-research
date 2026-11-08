@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
-import requests
+from . import http
 
 HOURLY = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m",
           "vapour_pressure_deficit", "precipitation", "soil_moisture_0_to_7cm"]
@@ -23,7 +23,7 @@ def fetch_points(cfg: dict, lats, lons, start: date, end: date) -> list[pd.DataF
         "start_date": start.isoformat(), "end_date": end.isoformat(),
         "hourly": ",".join(HOURLY), "models": "era5_land", "timezone": "Asia/Shanghai",
     }
-    r = requests.get(cfg["weather"]["archive_url"], params=params, timeout=120)
+    r = http.get(cfg["weather"]["archive_url"], params=params)
     r.raise_for_status()
     js = r.json()
     js = js if isinstance(js, list) else [js]
