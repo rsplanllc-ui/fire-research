@@ -1,0 +1,43 @@
+name: 用火点发现火灾
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "范围：西,南,东,北（经纬度），例如湖南南部 111,24.6,114.3,27.5"
+        required: true
+      start:
+        description: "开始日期 YYYY-MM-DD"
+        required: true
+      end:
+        description: "结束日期 YYYY-MM-DD"
+        required: true
+      province:
+        description: "省份（用于编号），如 湖南"
+        default: ""
+      min_points:
+        description: "一场火至少有几个火点（越大越只保留大火）"
+        default: "10"
+      refine:
+        description: "同时给名单里已有坐标、缺日期的火场补日期（yes/no）"
+        default: "no"
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt && pip install -e .
+      - run: >
+          python -m firepipe.cli discover --bbox "${{ inputs.bbox }}"
+          --start ${{ inputs.start }} --end ${{ inputs.end }}
+          --min-points ${{ inputs.min_points }}
+          ${{ inputs.province && format('--province {0}', inputs.province) || '' }}
+      - if: inputs.refine == 'yes'
+        run: python -m firepipe.cli refine-dates

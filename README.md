@@ -31,9 +31,17 @@
 - 开发阶段只看开发火场的“按火场分组交叉验证”成绩。
 - 最终测试每运行一次都会留下记录；第二次及以后的运行会自动注明“测试集已不再是全新的”。
 
+## 自动发现火灾（VIIRS 火点）
+
+GitHub → Actions →「用火点发现火灾」→ 填范围和日期 → 运行。程序会把 VIIRS 375 m 火点按时空聚类（相距 ≤1.5 km、相隔 ≤2 天算同一场），
+第一个和最后一个火点的日期就是起止日期，火点中心就是坐标，然后写进名单，第二天凌晨自动处理。
+已在名单里的火场（3 km、5 天内）不会重复加入。
+
 ## 常用命令
 
 ```bash
+python -m firepipe.cli discover --bbox 111,24.6,114.3,27.5 --start 2022-09-01 --end 2022-11-30 --province 湖南
+python -m firepipe.cli refine-dates                       # 用火点给缺日期的火场补起止日期
 python -m firepipe.cli import-fires data/fires_seed.csv   # 导入火场
 python -m firepipe.cli split --lock                       # 划分并锁定封存测试火场
 python -m firepipe.cli process --limit 20                 # 处理待处理火场
@@ -46,9 +54,10 @@ python -m firepipe.cli final-test --algo lightgbm --confirm
 
 - `SUPABASE_URL` = `https://cgoajvzmghvvxacimcvn.supabase.co`
 - `SUPABASE_SERVICE_KEY` = Supabase 后台 → Project Settings → API Keys 里的 secret key（不要发到聊天里）
+- `FIRMS_MAP_KEY` = NASA FIRMS 免费密钥（https://firms.modaps.eosdis.nasa.gov/api/map_key/ 填邮箱即可获得）
 
 ## 已知限制 / 下一步
 
 - TWI 用的是没有填洼的简单 D8 汇流，属于近似。
-- 冠层高度、森林类型、按 VIIRS 火点确定的“燃烧当天”天气，还没有接入（计划在 v2 加入）。
+- 冠层高度、森林类型、逐像元“燃烧当天”的天气，还没有接入（计划在 v2 加入；火点数据已经接入，用于确定起止日期）。
 - 远程取数部分还没有在真实网络上跑过，第一次处理火场时需要查看运行日志。

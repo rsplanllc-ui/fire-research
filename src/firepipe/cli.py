@@ -1,5 +1,8 @@
 """命令行入口：python -m firepipe.cli <命令>
 
+  discover --bbox W,S,E,N --start D --end D [--province 湖南] [--min-points 5]
+                                  用 VIIRS 火点自动发现火灾并写入名单
+  refine-dates                    用 VIIRS 火点给“有坐标、缺日期/日期待核对”的火场补起止日期
   import-fires  清单.csv          导入/更新火场名单
   split [--lock]                  按分层随机划分封存测试火场（--lock 后不可更改）
   process [--limit N]             处理所有待处理火场（取数、质检、采样、入库）
@@ -15,9 +18,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-from . import build, catalog, model
+from datetime import date, timedelta
+
+from . import build, catalog, firms, model
 from .config import feature_list, load_config
 from .db import DB, now
 
@@ -98,10 +104,89 @@ def cmd_final(args, cfg, db):
     print(note, eid, json.dumps(res["summary"], ensure_ascii=False))
 
 
+def _upsert_fires(db, df):
+    cols = ["fire_id", "name_cn", "province", "place", "year", "ignition_date", "end_date",
+            "center_lat", "center_lon", "boundary_path", "qc_status", "qc_notes", "legacy_drive_folder_id"]
+    rows = df.reindex(columns=cols).astype(object).where(df.reindex(columns=cols).notna(), None)
+    db.upsert("fires", rows.to_dict("records"), on_conflict="fire_id")
+
+
+def cmd_discover(args, cfg, db):
+    bbox = [float(v) for v in args.bbox.split(",")]
+    pts = firms.fetch(bbox, date.fromisoformat(args.start), date.fromisoformat(args.end))
+    ev = firms.cluster_events(pts, min_points=args.min_points)
+    print(f"火点 {len(pts)} 个，聚成 {len(ev)} 场火灾（≥{args.min_points} 个火点）")
+    if ev.empty:
+        return
+    new = firms.events_to_fires(ev, args.province)
+    have = pd.DataFrame(db.select("fires", {"select": "fire_id,center_lat,center_lon,ignition_date"}))
+    if not have.empty:   # 已在名单里的（3 km、5 天内）不重复加入
+        have["ignition_date"] = pd.to_datetime(have["ignition_date"]).dt.date
+        dup = []
+        for i, r in new.iterrows():
+            d = np.hypot(have.center_lat - r.center_lat, have.center_lon - r.center_lon) < 0.03
+            t = have.ignition_date.map(lambda x: abs((x - r.ignition_date).days) <= 5 if x else False)
+            dup.append(bool((d & t).any()))
+        new = new[~np.array(dup)]
+    if new.empty:
+        print("全部已在名单里")
+        return
+    new = catalog.prepare(new)
+    existing_ids = {f["fire_id"] for f in db.select("fires", {"select": "fire_id"})}
+    new["fire_id"] = _next_ids(new, existing_ids)
+    _upsert_fires(db, new)
+    print(new[["fire_id", "name_cn", "ignition_date", "end_date"]].to_string(index=False))
+
+
+def _next_ids(df, existing):
+    ids = []
+    for _, r in df.iterrows():
+        code = catalog.PROVINCE_CODE.get(r.get("province"), "XX")
+        k = 1
+        while f"{code}_{int(r['year'])}_{k:03d}" in existing:
+            k += 1
+        fid = f"{code}_{int(r['year'])}_{k:03d}"
+        existing.add(fid)
+        ids.append(fid)
+    return ids
+
+
+def cmd_refine(args, cfg, db):
+    fires = db.select("fires", {"select": "*", "center_lat": "not.is.null"})
+    for f in fires:
+        if f.get("ignition_date") and not args.all:
+            continue
+        lat, lon = f["center_lat"], f["center_lon"]
+        if f.get("ignition_date"):
+            a = date.fromisoformat(f["ignition_date"]) - timedelta(days=15)
+            b = date.fromisoformat(f["end_date"] or f["ignition_date"]) + timedelta(days=15)
+        elif f.get("year"):
+            a, b = date(int(f["year"]), 1, 1), date(int(f["year"]), 12, 31)
+        else:
+            continue
+        pts = firms.fetch([lon - 0.05, lat - 0.05, lon + 0.05, lat + 0.05], a, b)
+        e = firms.nearest_event(firms.cluster_events(pts, min_points=3), lat, lon)
+        if e is None:
+            print(f["fire_id"], "附近没有找到火点")
+            continue
+        db.update("fires", {"fire_id": f["fire_id"]},
+                  {"ignition_date": e.ignition_date, "end_date": e.end_date,
+                   "qc_notes": f"起止日期由 FIRMS 火点确定（{int(e.n_points)} 个火点）",
+                   "qc_status": "pending" if f["qc_status"] == "excluded" else f["qc_status"]})
+        print(f["fire_id"], e.ignition_date, "→", e.end_date, int(e.n_points), "个火点")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="firepipe")
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("import-fires"); a.add_argument("path"); a.set_defaults(f=cmd_import)
+    a = sub.add_parser("discover"); a.add_argument("--bbox", required=True)
+    a.add_argument("--start", required=True); a.add_argument("--end", required=True)
+    a.add_argument("--province"); a.add_argument("--min-points", type=int, default=5)
+    a.set_defaults(f=cmd_discover)
+    a = sub.add_parser("refine-dates"); a.add_argument("--all", action="store_true",
+                                                        help="已有日期的也重新核对")
+    a.set_defaults(f=cmd_refine)
     a = sub.add_parser("split"); a.add_argument("--lock", action="store_true"); a.set_defaults(f=cmd_split)
     a = sub.add_parser("process"); a.add_argument("--limit", type=int, default=20); a.set_defaults(f=cmd_process)
     a = sub.add_parser("train"); a.add_argument("--groups", nargs="*"); a.add_argument("--algos", nargs="*")
