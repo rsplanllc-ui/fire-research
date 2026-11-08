@@ -87,8 +87,9 @@ def load_composite(cfg: dict, grid, datetime_range: str, fallback_range: str | N
 
     # 不同处理基线的 scale/offset 可能不同 → 分组读取再换算
     groups: dict[tuple, list] = {}
+    ignore_off = cfg["sentinel2"].get("ignore_stac_offset", False)
     for it in items:
-        key = tuple(_scale_offset(it, b) for b in BANDS)
+        key = tuple((s, 0.0 if ignore_off else o) for s, o in (_scale_offset(it, b) for b in BANDS))
         groups.setdefault(key, []).append(it)
 
     stacks = []
