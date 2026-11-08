@@ -187,3 +187,18 @@ def test_within_fire_ceiling_runs():
     cfg = {**cfg, "model": {**cfg["model"], "features": {"terrain": ["slope"]}}}
     res = within_fire_ceiling(cfg, d, ["terrain"], algo="ridge")
     assert len(res) == 1 and res["r2"].iloc[0] > 0.8
+
+
+def test_weather_summary_keeps_missing_as_missing():
+    from datetime import date
+
+    from firepipe.weather import summarize
+    idx = pd.date_range("2022-07-01", "2022-10-20 23:00", freq="h")
+    df = pd.DataFrame({"temperature_2m": 25.0, "relative_humidity_2m": 40.0, "wind_speed_10m": 10.0,
+                       "vapour_pressure_deficit": 1.5, "precipitation": np.nan,
+                       "soil_moisture_0_to_7cm": 0.3}, index=idx)
+    out = summarize(df, date(2022, 10, 17), date(2022, 10, 19), [7, 30])
+    assert np.isnan(out["prcp_30d"]) and np.isnan(out["dry_days_30d"]) and out["fire_windmax"] == 10
+    df["precipitation"] = 0.5
+    out = summarize(df, date(2022, 10, 17), date(2022, 10, 19), [7, 30])
+    assert out["prcp_7d"] == pytest.approx(84) and out["dry_days_30d"] == 0

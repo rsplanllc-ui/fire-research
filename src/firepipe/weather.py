@@ -21,7 +21,8 @@ def fetch_points(cfg: dict, lats, lons, start: date, end: date) -> list[pd.DataF
         "latitude": ",".join(f"{v:.4f}" for v in lats),
         "longitude": ",".join(f"{v:.4f}" for v in lons),
         "start_date": start.isoformat(), "end_date": end.isoformat(),
-        "hourly": ",".join(HOURLY), "models": "era5_land", "timezone": "Asia/Shanghai",
+        # 不指定模型：Open-Meteo 默认把 ERA5-Land 与 ERA5 无缝组合，ERA5-Land 缺的变量（风速、降水）自动用 ERA5 补
+        "hourly": ",".join(HOURLY), "timezone": "Asia/Shanghai",
     }
     r = http.get(cfg["weather"]["archive_url"], params=params)
     r.raise_for_status()
@@ -36,9 +37,11 @@ def fetch_points(cfg: dict, lats, lons, start: date, end: date) -> list[pd.DataF
 
 
 def summarize(df: pd.DataFrame, ign: date, end: date, ante: list[int]) -> dict:
-    d = df.resample("D").agg({"temperature_2m": "max", "relative_humidity_2m": "min",
-                              "wind_speed_10m": "max", "vapour_pressure_deficit": "max",
-                              "precipitation": "sum", "soil_moisture_0_to_7cm": "mean"})
+    g = df.resample("D")
+    d = pd.DataFrame({"temperature_2m": g["temperature_2m"].max(), "relative_humidity_2m": g["relative_humidity_2m"].min(),
+                      "wind_speed_10m": g["wind_speed_10m"].max(), "vapour_pressure_deficit": g["vapour_pressure_deficit"].max(),
+                      "precipitation": g["precipitation"].sum(min_count=1),     # 全缺时为空，而不是 0
+                      "soil_moisture_0_to_7cm": g["soil_moisture_0_to_7cm"].mean()})
     fire = d.loc[str(ign):str(end)]
     before = d.loc[:str(ign - timedelta(days=1))]
     out = {
@@ -47,10 +50,11 @@ def summarize(df: pd.DataFrame, ign: date, end: date, ante: list[int]) -> dict:
         "fire_windmax": fire["wind_speed_10m"].max(),
         "fire_vpdmax": fire["vapour_pressure_deficit"].max(),
         "soilm_7d": before["soil_moisture_0_to_7cm"].tail(7).mean(),
-        "dry_days_30d": int((before["precipitation"].tail(30) < 1.0).sum()),
+        "dry_days_30d": (int((before["precipitation"].tail(30) < 1.0).sum())
+                         if before["precipitation"].tail(30).notna().all() else np.nan),
     }
     for n in ante:
-        out[f"prcp_{n}d"] = before["precipitation"].tail(n).sum()
+        out[f"prcp_{n}d"] = before["precipitation"].tail(n).sum(min_count=n)
     return {k: float(v) for k, v in out.items()}
 
 

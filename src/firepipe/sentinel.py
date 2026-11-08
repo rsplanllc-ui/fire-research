@@ -99,8 +99,10 @@ def load_composite(cfg: dict, grid, datetime_range: str, fallback_range: str | N
         mask = ds["scl"].isin(valid_scl)
         refl = {}
         for b, (s, o) in zip(BANDS, key):
-            v = ds[b].where(ds[b] > 0).astype("float32") * s + o
-            refl[b] = v.where(mask & (v > 0) & (v < 1.5))
+            v = ds[b].where(ds[b] > 0).astype("float32") * s + o     # DN=0 是无数据
+            # 山地阴坡、冬季低太阳高度时，红/蓝波段大气校正后可能接近 0 或略小于 0，属正常暗像元：
+            # 截到 0.0001 保留，而不是当作无效值丢掉（否则 NDVI/EVI 大面积缺失）
+            refl[b] = v.where(mask & (v > -0.05) & (v < 1.5)).clip(min=1e-4)
         stacks.append(xr.Dataset(refl))
     allds = xr.concat(stacks, dim="time") if len(stacks) > 1 else stacks[0]
     comp = allds.median("time", skipna=True)
