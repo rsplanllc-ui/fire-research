@@ -17,7 +17,9 @@ def per_fire(df: pd.DataFrame, y: str = "y", p: str = "pred", g: str = "fire_id"
     rows = []
     for fid, d in df.groupby(g):
         e = d[p] - d[y]
+        yc, pc = d[y] - d[y].mean(), d[p] - d[p].mean()
         rows.append({"fire_id": fid, "n_pixels": len(d), "r2": r2(d[y], d[p]),
+                     "r2_centered": r2(yc, pc),     # 诊断：去掉整体偏差后，只看场内格局
                      "rmse": float(np.sqrt(np.mean(e ** 2))), "mae": float(np.mean(np.abs(e))),
                      "bias": float(np.mean(e)), "obs_var": float(np.var(d[y]))})
     return pd.DataFrame(rows)
@@ -31,6 +33,8 @@ def summarize(fm: pd.DataFrame, pooled: tuple | None = None, threshold: float = 
          "share_fires_ge_threshold": float((fm["r2"] >= threshold).mean()),
          "all_fires_ge_threshold": bool((fm["r2"] >= threshold).all()),
          "rmse_median": float(fm["rmse"].median())}
+    if "r2_centered" in fm:
+        s["r2_centered_median"] = float(fm["r2_centered"].median())
     if pooled is not None:
         s["r2_pooled_pixels"] = r2(*pooled)   # 只作补充，不作验收依据
     return s

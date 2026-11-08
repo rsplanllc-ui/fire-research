@@ -126,7 +126,9 @@ def log_experiment(db, cfg: dict, name: str, algo: str, groups, res: dict, eval_
     rows = [{**r, "experiment_id": exp["id"], "eval_set": eval_set}
             for r in res["per_fire"].to_dict("records")]
     for r in rows:
-        r["r2"] = None if not np.isfinite(r["r2"]) else r["r2"]
+        for k in ("r2", "r2_centered"):
+            if k in r:
+                r[k] = None if r[k] is None or not np.isfinite(r[k]) else r[k]
     db.upsert("fire_metrics", rows, on_conflict="experiment_id,fire_id,eval_set")
     return exp["id"]
 
