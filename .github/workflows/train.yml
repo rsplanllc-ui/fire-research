@@ -6,7 +6,7 @@ on:
       task:
         description: "train=开发集交叉验证；ablation=删减因子组；final-test=封存测试（只在开发完成后跑）"
         type: choice
-        options: [train, ablation, within-fire, diag, final-test]
+        options: [train, ablation, within-fire, diag, split-lock, final-test]
         default: train
       scenario:
         description: "因子情景：prefire=只用火前因子；with_fire_obs=火前+火中观测（火点）"
@@ -38,6 +38,9 @@ jobs:
       - name: 删减因子组
         if: inputs.task == 'ablation'
         run: python -m firepipe.cli ablation --algo ${{ inputs.algo }} --scenario ${{ inputs.scenario }}
+      - name: 划分并锁定封存测试火场
+        if: inputs.task == 'split-lock'
+        run: python -m firepipe.cli split --lock
       - name: 数据检查
         if: inputs.task == 'diag'
         run: python -m firepipe.cli diag

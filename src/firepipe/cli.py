@@ -57,7 +57,7 @@ def cmd_import(args, cfg, db):
 
 
 def cmd_split(args, cfg, db):
-    fires = pd.DataFrame(db.select("fires", {"select": "*", "qc_status": "neq.excluded"}))
+    fires = pd.DataFrame(db.select("fires", {"select": "*", "qc_status": "eq.ok"}))   # 只给质检通过的火场划分
     if fires["split_locked_at"].notna().any():
         print("已有锁定的划分，只给新火场补充划分")
         fires = fires[fires["split_locked_at"].isna()]
