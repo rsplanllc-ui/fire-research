@@ -159,7 +159,8 @@ def cmd_discover_batch(args, cfg, db):
     for prov, bbox in d["regions"].items():
         if args.provinces and prov not in args.provinces:
             continue
-        for start, end in d["seasons"]:
+        seasons = [x.split(":") for x in args.seasons] if args.seasons else d["seasons"]
+        for start, end in seasons:
             print(f"== {prov} {start}～{end}")
             try:
                 cmd_discover(SimpleNamespace(bbox=bbox, start=start, end=end, province=prov,
@@ -217,6 +218,7 @@ def main(argv=None):
     a.add_argument("--top", type=int)
     a.set_defaults(f=cmd_discover)
     a = sub.add_parser("discover-batch"); a.add_argument("--provinces", nargs="*")
+    a.add_argument("--seasons", nargs="*", help="形如 2019-10-01:2020-04-30")
     a.set_defaults(f=cmd_discover_batch)
     a = sub.add_parser("refine-dates"); a.add_argument("--all", action="store_true",
                                                         help="已有日期的也重新核对")
