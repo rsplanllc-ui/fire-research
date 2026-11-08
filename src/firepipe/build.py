@@ -90,7 +90,7 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     ver = cfg["pipeline_version"]
     workdir = Path(out_dir or tempfile.mkdtemp(prefix=f"{fire['fire_id']}_"))
     workdir.mkdir(parents=True, exist_ok=True)
-    qc: dict = {"fire_id": fire["fire_id"], "pipeline_version": ver, "issues": []}
+    qc: dict = {"fire_id": fire["fire_id"], "pipeline_version": ver, "issues": [], "notes": []}
 
     geom = _boundary(db, fire, workdir)
     grid = FireGrid.from_fire(fire, cfg["grid"]["resolution_m"], cfg["grid"]["bbox_half_deg"],
@@ -122,7 +122,7 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
                                                cfg["burn"]["hotspot_near_m"], cfg["burn"]["background_far_m"],
                                                cfg["burn"]["min_patch_pixels"])
         qc["perimeter_source"] = "viirs_hotspots+dnbr"
-        qc["issues"].append("火烧范围由火点+dNBR 自动提取，建议抽查")
+        qc["notes"].append("火烧范围由火点+dNBR 自动提取，建议抽查")
     else:
         x, y = to_utm.transform(float(fire["center_lon"]), float(fire["center_lat"]))
         c, r = inv @ (x, y)
@@ -189,7 +189,7 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
         db.upsert("data_assets", assets, on_conflict="fire_id,variable,pipeline_version")
         db.update("fires", {"fire_id": fire["fire_id"]},
                   {"qc_status": "pending" if qc["issues"] else "ok",
-                   "qc_notes": "；".join(qc["issues"]) or None})
+                   "qc_notes": "；".join(qc["issues"] + qc["notes"]) or None})
     return qc
 
 
