@@ -270,7 +270,7 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
             db.update("fires", {"fire_id": drop},
                       {"qc_status": "excluded",
                        "qc_notes": f"与 {keep} 为同一场火（中心相距 {km:.2f} km、日期重叠），已排除避免重复"})
-    fires = db.select("fires", {"qc_status": "eq.pending", "select": "*"})
+    fires = db.select("fires", {"qc_status": "in.(pending,ok)", "select": "*"})   # 版本升级后“已通过”的也要重做
     done = {a["fire_id"] for a in db.select("data_assets", {"variable": "eq.samples",
                                                             "pipeline_version": f"eq.{ver}",
                                                             "select": "fire_id"})}
