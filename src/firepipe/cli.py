@@ -98,6 +98,16 @@ def cmd_ablation(args, cfg, db):
     print(model.ablation(cfg, dev, args.algo, _groups(args, cfg)).to_string(index=False))
 
 
+def cmd_diag(args, cfg, db):
+    dev = load_samples(db, cfg, "dev")
+    feats = feature_list(cfg) + [cfg["model"]["target"]]
+    miss = dev.groupby("fire_id")[[f for f in feats if f in dev]].apply(lambda d: d.isna().mean()).round(2)
+    bad = miss.loc[:, (miss > 0.2).any()]
+    print("缺失比例 >20% 的因子（按火场）：")
+    print(bad[(bad > 0.2).any(axis=1)].to_string())
+    print(dev[[f for f in feats if f in dev]].describe().T.round(3).to_string())
+
+
 def cmd_within(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
     res = model.within_fire_ceiling(cfg, dev, _groups(args, cfg))
@@ -240,6 +250,7 @@ def main(argv=None):
     a.set_defaults(f=cmd_train)
     a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
+    a = sub.add_parser("diag"); a.set_defaults(f=cmd_diag)
     a = sub.add_parser("within-fire"); a.add_argument("--scenario"); a.add_argument("--groups", nargs="*")
     a.set_defaults(f=cmd_within)
     a = sub.add_parser("final-test"); a.add_argument("--algo", required=True)
