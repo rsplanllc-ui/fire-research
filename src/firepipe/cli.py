@@ -124,7 +124,8 @@ def _upsert_fires(db, df):
 
 def cmd_discover(args, cfg, db):
     bbox = [float(v) for v in args.bbox.split(",")] if isinstance(args.bbox, str) else list(args.bbox)
-    pts = firms.fetch(bbox, date.fromisoformat(args.start), date.fromisoformat(args.end))
+    pts = firms.fetch(bbox, date.fromisoformat(args.start), date.fromisoformat(args.end),
+                      sources=["VIIRS_SNPP_SP"])        # 大范围查询只用一颗卫星，节省额度
     ev = firms.cluster_events(pts, min_points=args.min_points)
     if getattr(args, "top", None) and len(ev) > args.top:
         ev = ev.sort_values("n_points", ascending=False).head(args.top).sort_values("ignition_date")
@@ -156,6 +157,8 @@ def cmd_discover_batch(args, cfg, db):
     from types import SimpleNamespace
     d = cfg["discovery"]
     for prov, bbox in d["regions"].items():
+        if args.provinces and prov not in args.provinces:
+            continue
         for start, end in d["seasons"]:
             print(f"== {prov} {start}～{end}")
             try:
@@ -213,7 +216,8 @@ def main(argv=None):
     a.add_argument("--province"); a.add_argument("--min-points", type=int, default=5)
     a.add_argument("--top", type=int)
     a.set_defaults(f=cmd_discover)
-    a = sub.add_parser("discover-batch"); a.set_defaults(f=cmd_discover_batch)
+    a = sub.add_parser("discover-batch"); a.add_argument("--provinces", nargs="*")
+    a.set_defaults(f=cmd_discover_batch)
     a = sub.add_parser("refine-dates"); a.add_argument("--all", action="store_true",
                                                         help="已有日期的也重新核对")
     a.set_defaults(f=cmd_refine)

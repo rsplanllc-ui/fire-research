@@ -2,6 +2,10 @@ name: 批量发现火灾（按配置）
 
 on:
   workflow_dispatch:
+    inputs:
+      provinces:
+        description: "只跑这些省份（空格分隔，留空=全部）"
+        default: ""
 
 concurrency: discover   # 同一时间只跑一个发现任务，避免编号冲突
 
@@ -18,4 +22,4 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - run: pip install -r requirements.txt && pip install -e .
-      - run: python -m firepipe.cli discover-batch
+      - run: python -m firepipe.cli discover-batch ${{ inputs.provinces && format('--provinces {0}', inputs.provinces) || '' }}

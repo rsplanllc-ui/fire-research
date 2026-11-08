@@ -71,9 +71,8 @@ def _hotspots(cfg, grid, fire, to_utm, inv, qc):
                             "frp": pd.to_numeric(pts.get("frp", pd.Series(np.nan, index=pts.index)),
                                                  errors="coerce").values})
         return out
-    except Exception as e:
-        qc["issues"].append(f"火点读取失败：{e}")
-        return None
+    except Exception as e:      # 火点取不到：让这场处理失败，下次自动重试，而不是退回不可靠的方法
+        raise RuntimeError(f"火点读取失败：{e}") from e
 
 
 def sample_pixels(layers: dict[str, np.ndarray], perimeter: np.ndarray, target: str,

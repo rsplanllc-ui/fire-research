@@ -26,8 +26,7 @@ def fetch(bbox, start: date, end: date, sources=SOURCES, key: str | None = None)
         d = start
         while d <= end:
             n = min(5, (end - d).days + 1)
-            r = http.get(API.format(key=key, src=src, area=area, days=n, date=d.isoformat()))
-            r.raise_for_status()
+            r = _get_quota_aware(API.format(key=key, src=src, area=area, days=n, date=d.isoformat()))
             if r.text.strip() and not r.text.lower().startswith("invalid"):
                 df = pd.read_csv(io.StringIO(r.text))
                 if len(df):
@@ -39,6 +38,19 @@ def fetch(bbox, start: date, end: date, sources=SOURCES, key: str | None = None)
     out = pd.concat(parts, ignore_index=True)
     out["acq_date"] = pd.to_datetime(out["acq_date"]).dt.date
     return out
+
+
+def _get_quota_aware(url: str, tries: int = 15, wait: float = 60):
+    """FIRMS 每 10 分钟有请求额度，用完时返回 400。遇到就等一分钟再试，最多约 15 分钟。"""
+    import time
+    for _ in range(tries):
+        r = http.get(url)
+        if r.status_code == 200 and not r.text.lower().startswith(("invalid", "exceeding")):
+            return r
+        if r.status_code not in (400, 403, 429) and r.status_code != 200:
+            r.raise_for_status()
+        time.sleep(wait)
+    raise RuntimeError(f"FIRMS 多次重试仍失败：{r.status_code} {r.text[:200]}")
 
 
 def cluster_events(pts: pd.DataFrame, dist_km: float = 1.5, gap_days: int = 2,
