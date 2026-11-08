@@ -86,3 +86,15 @@ def idw_to_grid(pts: pd.DataFrame, grid, power: float = 2.0) -> dict:
         v = (w * pts[col].values).sum(-1).astype("float32")
         out[col] = xr.DataArray(v, coords={"y": ys, "x": xs}, dims=("y", "x"))
     return out
+
+
+def fire_daily(cfg: dict, fire: dict) -> pd.DataFrame:
+    """火灾期间（起火前 1 天到结束后 1 天）中心点的逐日天气，用于“燃烧当天天气”。"""
+    ign = date.fromisoformat(str(fire["ignition_date"]))
+    end = date.fromisoformat(str(fire["end_date"]))
+    df = fetch_points(cfg, [float(fire["center_lat"])], [float(fire["center_lon"])],
+                      ign - timedelta(days=1), end + timedelta(days=1))[0]
+    d = df.resample("D").agg({"temperature_2m": "max", "relative_humidity_2m": "min",
+                              "wind_speed_10m": "max", "vapour_pressure_deficit": "max"})
+    d.columns = ["tmax", "rhmin", "windmax", "vpdmax"]
+    return d

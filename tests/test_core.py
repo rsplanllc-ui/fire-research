@@ -155,3 +155,22 @@ def test_find_duplicates():
                       "end_date": ["2022-10-23", "2022-10-23", "2022-12-03"]})
     d = catalog.find_duplicates(f)
     assert [(a, b) for a, b, _ in d] == [("A", "B")]     # C 同地不同时，不算重复
+
+
+def test_hotspot_layers_and_burn_day_weather():
+    from datetime import date
+
+    from firepipe import fireobs
+    hs = pd.DataFrame({"row": [10, 10, 40], "col": [10, 12, 40],
+                       "acq_date": [date(2022, 10, 17), date(2022, 10, 18), date(2022, 10, 19)],
+                       "frp": [5.0, 20.0, 50.0]})
+    L = fireobs.hotspot_layers(hs, (60, 60), 30, date(2022, 10, 17), radius_m=150)
+    assert L["hs_dist"][10, 10] == 0 and L["hs_dist"][10, 15] == pytest.approx(90)
+    assert L["burn_day"][11, 11] in (0, 1) and L["burn_day"][45, 45] == 2
+    assert L["hs_count_750"][10, 11] == 2 and L["hs_frp_max_750"][10, 11] == 20
+    daily = pd.DataFrame({"tmax": [30, 31, 32], "rhmin": [20, 25, 30], "windmax": [3, 4, 5], "vpdmax": [2, 2, 3]},
+                         index=pd.to_datetime(["2022-10-17", "2022-10-18", "2022-10-19"]))
+    W = fireobs.burn_day_weather(L["burn_day"], daily, date(2022, 10, 17))
+    assert W["bd_tmax"][45, 45] == 32
+    C = fireobs.context_layers({"nbr_pre": np.ones((30, 30)), "ndvi_pre": np.ones((30, 30))}, 30)
+    assert np.allclose(C["nbr_pre_mean300"][5:-5, 5:-5], 1) and np.allclose(C["ndvi_pre_sd300"][5:-5, 5:-5], 0)

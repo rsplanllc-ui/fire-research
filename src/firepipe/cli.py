@@ -72,21 +72,30 @@ def cmd_split(args, cfg, db):
 
 
 def cmd_process(args, cfg, db):
-    res = build.process_queue(cfg, db, args.limit)
+    res = build.process_queue(cfg, db, args.limit, args.shard, args.nshards)
     print(json.dumps(res, ensure_ascii=False, indent=1, default=str)[:5000])
+
+
+def _groups(args, cfg):
+    if getattr(args, "scenario", None):
+        return cfg["model"]["scenarios"][args.scenario]
+    return args.groups
 
 
 def cmd_train(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
-    out = model.run_dev(cfg, dev, args.groups, args.algos)
+    groups = _groups(args, cfg)
+    tag = args.scenario or "custom"
+    print(f"开发集：{dev.fire_id.nunique()} 场火，{len(dev)} 个样本；情景 {tag}：{groups}")
+    out = model.run_dev(cfg, dev, groups, args.algos)
     for algo, res in out.items():
-        eid = model.log_experiment(db, cfg, f"dev_cv_{algo}", algo, args.groups, res, "cv")
+        eid = model.log_experiment(db, cfg, f"dev_cv_{tag}_{algo}", algo, groups, res, "cv")
         print(algo, eid, json.dumps(res["summary"], ensure_ascii=False))
 
 
 def cmd_ablation(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
-    print(model.ablation(cfg, dev, args.algo).to_string(index=False))
+    print(model.ablation(cfg, dev, args.algo, _groups(args, cfg)).to_string(index=False))
 
 
 def cmd_final(args, cfg, db):
@@ -95,12 +104,14 @@ def cmd_final(args, cfg, db):
     prev = db.select("fire_metrics", {"eval_set": "eq.test", "select": "experiment_id", "limit": "1"})
     note = "最终测试" + ("（注意：之前已运行过测试，测试集已不再是全新的）" if prev else "（首次）")
     dev, test = load_samples(db, cfg, "dev"), load_samples(db, cfg, "test")
-    res, m = model.final_test(cfg, dev, test, args.algo, args.groups)
+    groups = _groups(args, cfg)
+    res, m = model.final_test(cfg, dev, test, args.algo, groups)
     path = f"models/{cfg['pipeline_version']}/{args.algo}_{now()[:19].replace(':', '')}.joblib"
     tmp = Path(tempfile.mkdtemp()) / "m.joblib"
-    tmp.write_bytes(model.dump_model(m, feature_list(cfg, args.groups)))
+    tmp.write_bytes(model.dump_model(m, feature_list(cfg, groups)))
     db.upload(tmp, path)
-    eid = model.log_experiment(db, cfg, "final_test", args.algo, args.groups, res, "test", path, note)
+    eid = model.log_experiment(db, cfg, f"final_test_{args.scenario or 'custom'}", args.algo, groups, res,
+                               "test", path, note)
     print(note, eid, json.dumps(res["summary"], ensure_ascii=False))
 
 
@@ -207,12 +218,16 @@ def main(argv=None):
                                                         help="已有日期的也重新核对")
     a.set_defaults(f=cmd_refine)
     a = sub.add_parser("split"); a.add_argument("--lock", action="store_true"); a.set_defaults(f=cmd_split)
-    a = sub.add_parser("process"); a.add_argument("--limit", type=int, default=20); a.set_defaults(f=cmd_process)
+    a = sub.add_parser("process"); a.add_argument("--limit", type=int, default=20)
+    a.add_argument("--shard", type=int, default=0); a.add_argument("--nshards", type=int, default=1)
+    a.set_defaults(f=cmd_process)
     a = sub.add_parser("train"); a.add_argument("--groups", nargs="*"); a.add_argument("--algos", nargs="*")
+    a.add_argument("--scenario")
     a.set_defaults(f=cmd_train)
-    a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.set_defaults(f=cmd_ablation)
+    a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
+    a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
     a = sub.add_parser("final-test"); a.add_argument("--algo", required=True)
-    a.add_argument("--groups", nargs="*"); a.add_argument("--confirm", action="store_true")
+    a.add_argument("--groups", nargs="*"); a.add_argument("--scenario"); a.add_argument("--confirm", action="store_true")
     a.set_defaults(f=cmd_final)
     args = p.parse_args(argv)
     args.f(args, load_config(), DB())

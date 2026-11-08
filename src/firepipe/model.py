@@ -80,9 +80,9 @@ def run_dev(cfg: dict, df: pd.DataFrame, groups: list[str] | None = None,
     return out
 
 
-def ablation(cfg: dict, df: pd.DataFrame, algo: str = "lightgbm") -> pd.DataFrame:
+def ablation(cfg: dict, df: pd.DataFrame, algo: str = "lightgbm", groups: list[str] | None = None) -> pd.DataFrame:
     """逐组删减因子：删掉某一组后，留出火场的逐场 R² 中位数下降多少。"""
-    allg = list(cfg["model"]["features"])
+    allg = list(groups or cfg["model"]["features"])
     base = run_dev(cfg, df, allg, [algo])[algo]["summary"]["r2_median"]
     rows = [{"removed": "（无）", "r2_median": base, "drop": 0.0}]
     for g in allg:

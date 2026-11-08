@@ -8,6 +8,11 @@ on:
         type: choice
         options: [train, ablation, final-test]
         default: train
+      scenario:
+        description: "因子情景：prefire=只用火前因子；with_fire_obs=火前+火中观测（火点）"
+        type: choice
+        options: [prefire, with_fire_obs]
+        default: prefire
       algo:
         description: "final-test / ablation 使用的算法"
         default: lightgbm
@@ -29,10 +34,10 @@ jobs:
       - run: pip install -r requirements.txt && pip install -e .
       - name: 开发集交叉验证
         if: inputs.task == 'train'
-        run: python -m firepipe.cli train
+        run: python -m firepipe.cli train --scenario ${{ inputs.scenario }}
       - name: 删减因子组
         if: inputs.task == 'ablation'
-        run: python -m firepipe.cli ablation --algo ${{ inputs.algo }}
+        run: python -m firepipe.cli ablation --algo ${{ inputs.algo }} --scenario ${{ inputs.scenario }}
       - name: 最终测试
         if: inputs.task == 'final-test' && inputs.confirm_final == 'YES'
-        run: python -m firepipe.cli final-test --algo ${{ inputs.algo }} --confirm
+        run: python -m firepipe.cli final-test --algo ${{ inputs.algo }} --scenario ${{ inputs.scenario }} --confirm

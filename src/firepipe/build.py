@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import zlib
 import traceback
 from pathlib import Path
 
@@ -10,7 +11,9 @@ import numpy as np
 import rioxarray  # noqa: F401  （注册 .rio 方法）
 import pandas as pd
 
-from . import burn, landcover, sentinel, terrain, weather
+from scipy import ndimage
+
+from . import burn, fireobs, landcover, sentinel, terrain, weather
 from .db import DB, sha256
 from .geo import FireGrid
 
@@ -53,6 +56,8 @@ def _hotspots(cfg, grid, fire, to_utm, inv, qc):
         pts = firms.fetch(grid.bbox_lonlat, a, b)
         if "confidence" in pts:
             pts = pts[pts["confidence"].astype(str).str.lower().str[0] != "l"]
+        if "type" in pts:
+            pts = pts[pd.to_numeric(pts["type"], errors="coerce").fillna(0) == 0]
         qc["n_hotspots"] = int(len(pts))
         if pts.empty:
             return None
@@ -61,7 +66,11 @@ def _hotspots(cfg, grid, fire, to_utm, inv, qc):
         x, y = np.asarray(x), np.asarray(y)
         cols = inv.a * x + inv.b * y + inv.c
         rows = inv.d * x + inv.e * y + inv.f
-        return np.c_[np.floor(rows).astype(int), np.floor(cols).astype(int)]
+        out = pd.DataFrame({"row": np.floor(rows).astype(int), "col": np.floor(cols).astype(int),
+                            "acq_date": pts["acq_date"].values,
+                            "frp": pd.to_numeric(pts.get("frp", pd.Series(np.nan, index=pts.index)),
+                                                 errors="coerce").values})
+        return out
     except Exception as e:
         qc["issues"].append(f"火点读取失败：{e}")
         return None
@@ -98,6 +107,25 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
                               buffer_m=cfg["grid"]["boundary_buffer_m"])
     res = float(cfg["grid"]["resolution_m"])
 
+    from pyproj import Transformer
+    to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{grid.epsg}", always_xy=True)
+    inv = ~grid.geobox.transform
+    hs = _hotspots(cfg, grid, fire, to_utm, inv, qc)
+    hot_rc = hs[["row", "col"]].to_numpy() if hs is not None else None
+    wc = None
+    try:
+        wc = landcover.build_landcover(cfg, grid).values.astype("float32")
+    except Exception as e:  # 土地覆盖缺失不阻断流程
+        qc["issues"].append(f"WorldCover 读取失败：{e}")
+    if wc is not None and hot_rc is not None and len(hot_rc):
+        r = np.clip(hot_rc[:, 0], 0, wc.shape[0] - 1)
+        c = np.clip(hot_rc[:, 1], 0, wc.shape[1] - 1)
+        near = ndimage.binary_dilation(np.zeros(wc.shape, bool) | _mark(wc.shape, r, c), iterations=8)
+        qc["forest_share_hotspots"] = float(np.mean(wc[near] == 10))
+        if qc["forest_share_hotspots"] < cfg["qc"]["min_forest_share"] * 0.6:
+            qc["issues"].append(f"非森林火：火点周围林地占比 {qc['forest_share_hotspots']:.2f}")
+            return _finish_early(db, fire, qc)
+
     spec, smeta = sentinel.build_spectral(cfg, grid, fire)
     qc["sentinel"] = smeta
     for k in ("pre", "post"):
@@ -108,10 +136,6 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     template = spec["dnbr"]
 
     # 火烧范围与背景偏移
-    from pyproj import Transformer
-    to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{grid.epsg}", always_xy=True)
-    inv = ~grid.geobox.transform
-    hot_rc = _hotspots(cfg, grid, fire, to_utm, inv, qc)
     if geom is not None:
         perim = _rasterize(geom, grid)
         qc["perimeter_source"] = "boundary"
@@ -136,18 +160,31 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     layers["perimeter"] = perim.astype("float32")
     qc["dnbr_offset_value"] = off
     qc["burned_area_ha"] = float(perim.sum() * res * res / 1e4)
-    if qc["burned_area_ha"] < 10:
-        qc["issues"].append("火烧面积过小（<10 公顷）")
+    if qc["burned_area_ha"] < cfg["qc"]["min_area_ha"]:
+        qc["issues"].append(f"火烧面积过小（<{cfg['qc']['min_area_ha']} 公顷）")
 
     # 因子
     for k, v in terrain.build_terrain(cfg, grid).items():
         layers[k] = v.values.astype("float32")
-    try:
-        layers["worldcover"] = landcover.build_landcover(cfg, grid).values.astype("float32")
-    except Exception as e:  # 土地覆盖缺失不阻断流程
-        qc["issues"].append(f"WorldCover 读取失败：{e}")
+    if wc is not None:
+        layers["worldcover"] = wc
+        if perim.any():
+            qc["forest_share"] = float(np.mean(wc[perim] == 10))
+            if qc["forest_share"] < cfg["qc"]["min_forest_share"]:
+                qc["issues"].append(f"非森林火：火烧范围内林地占比 {qc['forest_share']:.2f}")
     for k, v in weather.build_weather(cfg, grid, fire).items():
         layers[k] = v.values.astype("float32")
+    layers.update(fireobs.context_layers(layers, res))
+
+    # 火中观测（火点）+ 燃烧当天天气
+    from datetime import date as _date
+    ign = _date.fromisoformat(str(fire["ignition_date"]))
+    if hs is not None:
+        layers.update(fireobs.hotspot_layers(hs, perim.shape, res, ign, cfg["burn"]["hotspot_near_m"]))
+        try:
+            layers.update(fireobs.burn_day_weather(layers["burn_day"], weather.fire_daily(cfg, fire), ign))
+        except Exception as e:
+            qc["notes"].append(f"燃烧当天天气读取失败：{e}")
 
     shapes = {k: v.shape for k, v in layers.items()}
     if len(set(shapes.values())) != 1:
@@ -176,6 +213,8 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     df.to_parquet(spath, index=False)
     sremote = f"samples/{ver}/{fire['fire_id']}.parquet"
     qc["n_samples"] = len(df)
+    if len(df) < cfg["qc"]["min_samples"]:
+        qc["issues"].append(f"样本过少（{len(df)}）")
     qc["dnbr_mean"] = float(df[cfg["model"]["target"]].mean()) if len(df) else None
     qc["dnbr_std"] = float(df[cfg["model"]["target"]].std()) if len(df) else None
     (workdir / "qc.json").write_text(json.dumps(qc, ensure_ascii=False, indent=2, default=str))
@@ -193,7 +232,24 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     return qc
 
 
+def _mark(shape, r, c):
+    m = np.zeros(shape, bool)
+    m[r, c] = True
+    return m
+
+
+def _finish_early(db, fire, qc):
+    if db:
+        db.update("fires", {"fire_id": fire["fire_id"]},
+                  {"qc_status": "excluded", "qc_notes": "；".join(qc["issues"])})
+    return qc
+
+
 def _source(k: str) -> str:
+    if k.startswith(("hs_", "burn_day")):
+        return "NASA FIRMS VIIRS 375 m"
+    if k.startswith("bd_"):
+        return "ERA5-Land via Open-Meteo（燃烧当天）"
     if k in {"elevation", "slope", "northness", "eastness", "tpi", "twi"}:
         return "cop-dem-glo-30"
     if k == "worldcover":
@@ -203,7 +259,7 @@ def _source(k: str) -> str:
     return "sentinel-2-l2a (Earth Search)"
 
 
-def process_queue(cfg: dict, db: DB, limit: int = 20) -> list[dict]:
+def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: int = 1) -> list[dict]:
     """处理所有“待处理且资料齐全、尚未用当前版本生成过数据”的火场。"""
     ver = cfg["pipeline_version"]
     from . import catalog
@@ -218,7 +274,8 @@ def process_queue(cfg: dict, db: DB, limit: int = 20) -> list[dict]:
                                                             "pipeline_version": f"eq.{ver}",
                                                             "select": "fire_id"})}
     todo = [f for f in fires if f["fire_id"] not in done
-            and all(f.get(k) for k in ("ignition_date", "end_date", "center_lat", "center_lon"))][:limit]
+            and all(f.get(k) for k in ("ignition_date", "end_date", "center_lat", "center_lon"))
+            and zlib.crc32(f["fire_id"].encode()) % nshards == shard][:limit]
     results = []
     for f in todo:
         rid = db.run_start("process", f["fire_id"])
