@@ -1,5 +1,5 @@
 # 火场研究流水线配置。改这里，不要在代码里写死参数。
-pipeline_version: "v1"
+pipeline_version: "v1.1"   # v1.1：火烧范围改由 VIIRS 火点约束
 
 grid:
   resolution_m: 30          # 统一网格分辨率
@@ -21,7 +21,11 @@ burn:
   # 没有官方边界时，用 dNBR 自动提取火烧范围（不取绝对值）
   dnbr_threshold: 0.10
   min_patch_pixels: 50
-  unburned_ring_m: [300, 1500]   # 计算 dNBR 偏移量用的火场外环
+  unburned_ring_m: [300, 1500]   # 有边界时：计算 dNBR 偏移量用的火场外环
+  min_hotspots: 3           # 至少几个 VIIRS 火点才用火点法
+  hotspot_near_m: 750       # 火烧像元离最近火点的最大距离
+  background_far_m: 3000    # 离火点这么远的像元作为“未燃背景”，用于扣除干旱/物候偏移
+  hotspot_pad_days: 3       # 取火点时，日期前后各放宽几天
 
 terrain:
   stac_collection: "cop-dem-glo-30"

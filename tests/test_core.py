@@ -115,3 +115,15 @@ def test_upsert_normalizes_keys(monkeypatch):
     assert d.url == "https://x.supabase.co"
     d.upsert("data_assets", [{"a": 1, "b": 2}, {"a": 3}])
     assert all(set(r) == {"a", "b"} for r in sent["rows"])
+
+
+def test_hotspot_perimeter_removes_drought_background():
+    rng = np.random.default_rng(3)
+    d = 0.25 + rng.normal(0, 0.02, (200, 200))          # 大旱：全区 dNBR 普遍抬高 0.25
+    d[80:120, 80:130] += 0.4                             # 真实火烧区
+    d[10:30, 150:190] += 0.4                             # 远处另一块变化（没有火点，如采伐）
+    hot = np.array([[90, 90], [100, 110], [115, 125]])
+    p, bg, _ = burn.hotspot_perimeter(d, hot, 30, 0.10, near_m=900, far_m=2000, min_patch=20)
+    assert abs(bg - 0.25) < 0.02
+    assert p[100, 100] and not p[20, 170] and not p[160, 40]
+    assert 0.7 < p.sum() / (40 * 50) < 1.3

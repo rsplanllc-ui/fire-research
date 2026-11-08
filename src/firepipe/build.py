@@ -39,6 +39,34 @@ def _rasterize(geom, grid) -> np.ndarray:
                      fill=0, dtype="uint8").astype(bool)
 
 
+def _hotspots(cfg, grid, fire, to_utm, inv, qc):
+    """取火灾期间（前后各放宽几天）的 VIIRS 火点，换算成网格行列号。没有密钥或失败时返回 None。"""
+    import os
+    from datetime import date, timedelta
+
+    from . import firms
+    if not os.environ.get("FIRMS_MAP_KEY"):
+        return None
+    try:
+        a = date.fromisoformat(str(fire["ignition_date"])) - timedelta(days=cfg["burn"]["hotspot_pad_days"])
+        b = date.fromisoformat(str(fire["end_date"])) + timedelta(days=cfg["burn"]["hotspot_pad_days"])
+        pts = firms.fetch(grid.bbox_lonlat, a, b)
+        if "confidence" in pts:
+            pts = pts[pts["confidence"].astype(str).str.lower().str[0] != "l"]
+        qc["n_hotspots"] = int(len(pts))
+        if pts.empty:
+            return None
+        qc["hotspot_dates"] = [str(min(pts["acq_date"])), str(max(pts["acq_date"]))]
+        x, y = to_utm.transform(pts["longitude"].values, pts["latitude"].values)
+        x, y = np.asarray(x), np.asarray(y)
+        cols = inv.a * x + inv.b * y + inv.c
+        rows = inv.d * x + inv.e * y + inv.f
+        return np.c_[np.floor(rows).astype(int), np.floor(cols).astype(int)]
+    except Exception as e:
+        qc["issues"].append(f"火点读取失败：{e}")
+        return None
+
+
 def sample_pixels(layers: dict[str, np.ndarray], perimeter: np.ndarray, target: str,
                   spacing: int, max_n: int, seed: int) -> pd.DataFrame:
     """在火场范围内按固定间距取点，再随机抽到上限。"""
@@ -79,22 +107,31 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     layers = {k: v.values.astype("float32") for k, v in spec.items()}
     template = spec["dnbr"]
 
-    # 火烧范围
+    # 火烧范围与背景偏移
+    from pyproj import Transformer
+    to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{grid.epsg}", always_xy=True)
+    inv = ~grid.geobox.transform
+    hot_rc = _hotspots(cfg, grid, fire, to_utm, inv, qc)
     if geom is not None:
         perim = _rasterize(geom, grid)
         qc["perimeter_source"] = "boundary"
+        ring = burn.offset_ring(perim, res, cfg["burn"]["unburned_ring_m"])
+        off = burn.dnbr_offset(layers["dnbr"], ring)
+    elif hot_rc is not None and len(hot_rc) >= cfg["burn"]["min_hotspots"]:
+        perim, off, _ = burn.hotspot_perimeter(layers["dnbr"], hot_rc, res, cfg["burn"]["dnbr_threshold"],
+                                               cfg["burn"]["hotspot_near_m"], cfg["burn"]["background_far_m"],
+                                               cfg["burn"]["min_patch_pixels"])
+        qc["perimeter_source"] = "viirs_hotspots+dnbr"
+        qc["issues"].append("火烧范围由火点+dNBR 自动提取，建议抽查")
     else:
-        from pyproj import Transformer
-        x, y = Transformer.from_crs("EPSG:4326", f"EPSG:{grid.epsg}", always_xy=True).transform(
-            float(fire["center_lon"]), float(fire["center_lat"]))
-        inv = ~grid.geobox.transform
+        x, y = to_utm.transform(float(fire["center_lon"]), float(fire["center_lat"]))
         c, r = inv @ (x, y)
         perim = burn.derive_perimeter(layers["dnbr"], (int(r), int(c)),
                                       cfg["burn"]["dnbr_threshold"], cfg["burn"]["min_patch_pixels"])
         qc["perimeter_source"] = "derived_dnbr"
-        qc["issues"].append("火烧范围为自动提取，需人工核对")
-    ring = burn.offset_ring(perim, res, cfg["burn"]["unburned_ring_m"])
-    off = burn.dnbr_offset(layers["dnbr"], ring)
+        qc["issues"].append("没有火点，火烧范围仅按 dNBR 阈值提取，可靠性低")
+        ring = burn.offset_ring(perim, res, cfg["burn"]["unburned_ring_m"])
+        off = burn.dnbr_offset(layers["dnbr"], ring)
     layers["dnbr_offset"] = layers["dnbr"] - off
     layers["perimeter"] = perim.astype("float32")
     qc["dnbr_offset_value"] = off

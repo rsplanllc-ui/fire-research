@@ -1,0 +1,22 @@
+name: 用火点核准起止日期
+
+on:
+  workflow_dispatch:
+    inputs:
+      all:
+        description: "已有日期的火场也重新核准（yes/no）"
+        default: "yes"
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt && pip install -e .
+      - run: python -m firepipe.cli refine-dates ${{ inputs.all == 'yes' && '--all' || '' }}

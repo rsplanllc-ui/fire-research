@@ -164,14 +164,15 @@ def cmd_refine(args, cfg, db):
             a, b = date(int(f["year"]), 1, 1), date(int(f["year"]), 12, 31)
         else:
             continue
-        pts = firms.fetch([lon - 0.05, lat - 0.05, lon + 0.05, lat + 0.05], a, b)
+        pts = firms.fetch([lon - 0.08, lat - 0.08, lon + 0.08, lat + 0.08], a, b)
         e = firms.nearest_event(firms.cluster_events(pts, min_points=3), lat, lon)
         if e is None:
             print(f["fire_id"], "附近没有找到火点")
             continue
         db.update("fires", {"fire_id": f["fire_id"]},
                   {"ignition_date": e.ignition_date, "end_date": e.end_date,
-                   "qc_notes": f"起止日期由 FIRMS 火点确定（{int(e.n_points)} 个火点）",
+                   "center_lat": round(float(e.center_lat), 5), "center_lon": round(float(e.center_lon), 5),
+                   "qc_notes": f"起止日期和中心由 FIRMS 火点确定（{int(e.n_points)} 个火点）；原坐标 {lat:.4f},{lon:.4f}",
                    "qc_status": "pending" if f["qc_status"] == "excluded" else f["qc_status"]})
         print(f["fire_id"], e.ignition_date, "→", e.end_date, int(e.n_points), "个火点")
 
