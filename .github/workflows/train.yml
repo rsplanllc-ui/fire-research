@@ -1,0 +1,38 @@
+name: 训练与评价
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "train=开发集交叉验证；ablation=删减因子组；final-test=封存测试（只在开发完成后跑）"
+        type: choice
+        options: [train, ablation, final-test]
+        default: train
+      algo:
+        description: "final-test / ablation 使用的算法"
+        default: lightgbm
+      confirm_final:
+        description: "运行最终测试请填 YES"
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt && pip install -e .
+      - name: 开发集交叉验证
+        if: inputs.task == 'train'
+        run: python -m firepipe.cli train
+      - name: 删减因子组
+        if: inputs.task == 'ablation'
+        run: python -m firepipe.cli ablation --algo ${{ inputs.algo }}
+      - name: 最终测试
+        if: inputs.task == 'final-test' && inputs.confirm_final == 'YES'
+        run: python -m firepipe.cli final-test --algo ${{ inputs.algo }} --confirm

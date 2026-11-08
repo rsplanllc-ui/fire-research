@@ -1,0 +1,27 @@
+name: 处理火场数据
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "本次最多处理几个火场"
+        default: "20"
+  schedule:
+    - cron: "17 18 * * *"   # 每天北京时间 02:17 自动处理新加入的火场
+
+concurrency: process-fires
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      AWS_NO_SIGN_REQUEST: "YES"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt && pip install -e .
+      - run: python -m firepipe.cli process --limit ${{ github.event.inputs.limit || '20' }}

@@ -1,0 +1,3 @@
+-- 与 Supabase 项目 fire-research 中已执行的迁移 init_research_schema 相同（存档用）
+-- 表：fires, data_assets, experiments, fire_metrics, pipeline_runs；全部开启 RLS、无公开策略
+-- 触发器 protect_locked_split：锁定后不可修改 split；私有 bucket：fire-data

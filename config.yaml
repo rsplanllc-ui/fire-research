@@ -1,0 +1,58 @@
+# 火场研究流水线配置。改这里，不要在代码里写死参数。
+pipeline_version: "v1"
+
+grid:
+  resolution_m: 30          # 统一网格分辨率
+  bbox_half_deg: 0.06       # 没有边界时：以中心点为中心的半边长（度）
+  boundary_buffer_m: 1000   # 有边界时：边界外扩的距离
+
+sentinel2:
+  stac_url: "https://earth-search.aws.element84.com/v1"
+  collection: "sentinel-2-c1-l2a"
+  # 相对日期窗口（天）。火前相对起火日，火后相对结束日。所有火场一致。
+  pre_window_days: [-60, -1]
+  post_window_days: [3, 45]
+  max_scene_cloud: 70       # 整景云量上限（逐像元去云才是主要手段）
+  # SCL 有效类别：2 暗区（新鲜火烧迹地常被分到这一类，必须保留）、4 植被、5 裸地、6 水体、7 未分类
+  scl_valid: [2, 4, 5, 6, 7]
+  min_valid_fraction: 0.6   # 合成后有效像元比例低于此值 → 质检不通过
+
+burn:
+  # 没有官方边界时，用 dNBR 自动提取火烧范围（不取绝对值）
+  dnbr_threshold: 0.10
+  min_patch_pixels: 50
+  unburned_ring_m: [300, 1500]   # 计算 dNBR 偏移量用的火场外环
+
+terrain:
+  stac_collection: "cop-dem-glo-30"
+  tpi_radius_m: 300
+
+landcover:
+  worldcover_url: "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
+
+weather:
+  archive_url: "https://archive-api.open-meteo.com/v1/archive"
+  antecedent_days: [7, 30, 90]
+  grid_points: 3            # 每个火场取 3x3 个气象点做插值
+
+sample:
+  min_spacing_px: 3         # 采样点最小间距（像元），减弱相邻像元自相关
+  max_per_fire: 3000
+  seed: 42
+
+split:
+  test_fraction: 0.20
+  stratify_by: ["province"]
+  seed: 20261109
+
+model:
+  target: "dnbr_offset"     # 连续 dNBR（已减去火场外未燃区偏移）
+  features:
+    vegetation: ["nbr_pre", "ndvi_pre", "evi_pre", "ndmi_pre"]
+    terrain: ["elevation", "slope", "northness", "eastness", "tpi", "twi"]
+    landcover: ["worldcover"]
+    weather_fire: ["fire_tmax", "fire_rhmin", "fire_windmax", "fire_vpdmax"]
+    weather_antecedent: ["prcp_7d", "prcp_30d", "prcp_90d", "dry_days_30d", "soilm_7d"]
+  algorithms: ["mean_baseline", "ridge", "random_forest", "lightgbm"]
+  cv_folds: 5
+  acceptance_r2: 0.90       # 导师标准：封存测试火场逐场 R²
