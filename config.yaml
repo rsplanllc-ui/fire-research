@@ -8,7 +8,7 @@ grid:
 
 sentinel2:
   stac_url: "https://earth-search.aws.element84.com/v1"
-  collection: "sentinel-2-c1-l2a"
+  collection: "sentinel-2-l2a"   # c1 版尚未覆盖 2022 年华南；旧版带 scale/offset，代码会自动换算
   # 相对日期窗口（天）。火前相对起火日，火后相对结束日。所有火场一致。
   pre_window_days: [-60, -1]
   post_window_days: [3, 45]

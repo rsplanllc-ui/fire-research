@@ -163,7 +163,7 @@ def _source(k: str) -> str:
         return "ESA WorldCover 2021 v200"
     if k.startswith(("fire_", "prcp_", "dry_", "soilm")):
         return "ERA5-Land via Open-Meteo"
-    return "sentinel-2-c1-l2a (Earth Search)"
+    return "sentinel-2-l2a (Earth Search)"
 
 
 def process_queue(cfg: dict, db: DB, limit: int = 20) -> list[dict]:
