@@ -174,3 +174,16 @@ def test_hotspot_layers_and_burn_day_weather():
     assert W["bd_tmax"][45, 45] == 32
     C = fireobs.context_layers({"nbr_pre": np.ones((30, 30)), "ndvi_pre": np.ones((30, 30))}, 30)
     assert np.allclose(C["nbr_pre_mean300"][5:-5, 5:-5], 1) and np.allclose(C["ndvi_pre_sd300"][5:-5, 5:-5], 0)
+
+
+def test_within_fire_ceiling_runs():
+    from firepipe.model import within_fire_ceiling
+    rng = np.random.default_rng(0)
+    rr, cc = np.meshgrid(np.arange(0, 200, 3), np.arange(0, 200, 3))
+    d = pd.DataFrame({"fire_id": "F", "row": rr.ravel(), "col": cc.ravel()})
+    d["slope"] = rng.normal(size=len(d))
+    d["dnbr_offset"] = d["slope"] * 0.5 + rng.normal(0, 0.1, len(d))
+    cfg = load_config()
+    cfg = {**cfg, "model": {**cfg["model"], "features": {"terrain": ["slope"]}}}
+    res = within_fire_ceiling(cfg, d, ["terrain"], algo="ridge")
+    assert len(res) == 1 and res["r2"].iloc[0] > 0.8

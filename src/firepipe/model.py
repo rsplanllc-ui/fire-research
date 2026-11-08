@@ -153,3 +153,26 @@ def dump_model(model, feats: list[str]) -> bytes:
     joblib.dump({"model": model, "features": feats}, buf)
     return buf.getvalue()
 
+
+
+def within_fire_ceiling(cfg: dict, df: pd.DataFrame, groups: list[str] | None = None,
+                        block_px: int = 33, algo: str = "random_forest", min_blocks: int = 5) -> pd.DataFrame:
+    """诊断：同一场火内部，按约 1 km 的空间方块分组交叉验证（用本场其他方块训练）。
+    反映现有因子对“场内差异”的解释上限；不是验收口径（验收要求完全没见过的火场）。"""
+    feats = feature_list(cfg, groups)
+    target = cfg["model"]["target"]
+    rows = []
+    for fid, d in df.groupby("fire_id"):
+        d = d[np.isfinite(d[target])]
+        blocks = (d["row"] // block_px).astype(str) + "_" + (d["col"] // block_px).astype(str)
+        nb = blocks.nunique()
+        if nb < min_blocks or len(d) < 50:
+            continue
+        X, y = _xy(d, feats, target)
+        X = X.loc[:, X.notna().any()]
+        pred = np.full(len(d), np.nan)
+        for tr, te in GroupKFold(n_splits=min(5, nb)).split(X, y, blocks):
+            m = clone(make_model(algo)).fit(X.iloc[tr], y[tr])
+            pred[te] = m.predict(X.iloc[te])
+        rows.append({"fire_id": fid, "n_pixels": len(d), "n_blocks": nb, "r2": r2(y, pred)})
+    return pd.DataFrame(rows)

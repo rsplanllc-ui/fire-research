@@ -98,6 +98,14 @@ def cmd_ablation(args, cfg, db):
     print(model.ablation(cfg, dev, args.algo, _groups(args, cfg)).to_string(index=False))
 
 
+def cmd_within(args, cfg, db):
+    dev = load_samples(db, cfg, "dev")
+    res = model.within_fire_ceiling(cfg, dev, _groups(args, cfg))
+    print(res.to_string(index=False))
+    print("同场内部（1 km 方块交叉验证）逐场 R² 中位数：", round(float(res["r2"].median()), 3),
+          "；四分位：", res["r2"].quantile([0.25, 0.75]).round(3).tolist(), "；火场数：", len(res))
+
+
 def cmd_final(args, cfg, db):
     if not args.confirm:
         sys.exit("最终测试只应在开发完成后运行一次。确认请加 --confirm")
@@ -232,6 +240,8 @@ def main(argv=None):
     a.set_defaults(f=cmd_train)
     a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
+    a = sub.add_parser("within-fire"); a.add_argument("--scenario"); a.add_argument("--groups", nargs="*")
+    a.set_defaults(f=cmd_within)
     a = sub.add_parser("final-test"); a.add_argument("--algo", required=True)
     a.add_argument("--groups", nargs="*"); a.add_argument("--scenario"); a.add_argument("--confirm", action="store_true")
     a.set_defaults(f=cmd_final)
