@@ -225,3 +225,59 @@ def within_fire_ceiling(cfg: dict, df: pd.DataFrame, groups: list[str] | None = 
         rows.append({"fire_id": fid, "n_pixels": len(d), "n_blocks": nb, "r2": r2(y, pred),
                      "dnbr_mean": float(np.mean(y)), "dnbr_std": float(np.std(y))})
     return pd.DataFrame(rows)
+
+
+# ---------------- 分级 / 二分类口径（与文献的烈度潜势图对齐） ----------------
+# dNBR 分级阈值参考 Key & Benson (2006)：<0.10 未烧/极低，0.10–0.27 低，0.27–0.44 中低，0.44–0.66 中高，>0.66 高
+SEVERITY_BINS = [-np.inf, 0.27, 0.44, np.inf]      # 三级：低 / 中 / 高
+HIGH_THRESHOLD = 0.44                                # 二分：是否中高以上
+
+
+def classify_cv(cfg: dict, df: pd.DataFrame, groups: list[str] | None = None, algo: str = "lightgbm",
+                folds: int | None = None, seed: int = 0) -> dict:
+    """按火场分组交叉验证的分类口径：二分（是否高烈度）AUC，三级（低/中/高）总体精度与 Kappa，均按逐场和合并两种方式报告。
+    用 LightGBM 分类器；其他算法用随机森林分类器。"""
+    from sklearn.metrics import roc_auc_score, cohen_kappa_score, accuracy_score
+    from sklearn.model_selection import GroupKFold
+    feats = feature_list(cfg, groups)
+    target = cfg["model"]["target"]
+    d = df[np.isfinite(df[target])].reset_index(drop=True)
+    X, y = _xy(d, feats, target)
+    fires = d["fire_id"].values
+    y_bin = (y >= HIGH_THRESHOLD).astype(int)
+    y_cls = np.digitize(y, SEVERITY_BINS[1:-1])         # 0/1/2
+    folds = folds or cfg["model"]["cv_folds"]
+
+    def clf(n_classes):
+        if algo == "lightgbm":
+            from lightgbm import LGBMClassifier
+            return LGBMClassifier(n_estimators=600, learning_rate=0.03, num_leaves=31, subsample=0.8,
+                                  colsample_bytree=0.8, random_state=seed, verbose=-1)
+        from sklearn.ensemble import RandomForestClassifier
+        return make_pipeline(SimpleImputer(strategy="median"),
+                             RandomForestClassifier(n_estimators=400, min_samples_leaf=5, n_jobs=-1, random_state=seed))
+
+    p_bin = np.full(len(d), np.nan); p_cls = np.full(len(d), -1)
+    for tr, te in GroupKFold(n_splits=folds).split(X, y, fires):
+        m = clf(2).fit(X.iloc[tr], y_bin[tr]); p_bin[te] = m.predict_proba(X.iloc[te])[:, 1]
+        m3 = clf(3).fit(X.iloc[tr], y_cls[tr]); p_cls[te] = m3.predict(X.iloc[te])
+    rows = []
+    for fid in np.unique(fires):
+        i = fires == fid
+        auc = roc_auc_score(y_bin[i], p_bin[i]) if len(np.unique(y_bin[i])) == 2 else np.nan
+        rows.append({"fire_id": fid, "n": int(i.sum()), "high_share": float(y_bin[i].mean()),
+                     "auc": auc, "oa3": accuracy_score(y_cls[i], p_cls[i]),
+                     "kappa3": cohen_kappa_score(y_cls[i], p_cls[i]) if len(np.unique(y_cls[i])) > 1 else np.nan})
+    fm = pd.DataFrame(rows)
+    summary = {"n_fires": int(len(fm)),
+               "auc_pooled": float(roc_auc_score(y_bin, p_bin)),
+               "auc_median_per_fire": float(fm["auc"].median()),
+               "auc_q25_q75": [float(fm["auc"].quantile(.25)), float(fm["auc"].quantile(.75))],
+               "share_fires_auc_ge_0.7": float((fm["auc"] >= 0.7).mean()),
+               "oa3_pooled": float(accuracy_score(y_cls, p_cls)),
+               "kappa3_pooled": float(cohen_kappa_score(y_cls, p_cls)),
+               "oa3_median_per_fire": float(fm["oa3"].median()),
+               "kappa3_median_per_fire": float(fm["kappa3"].median()),
+               "high_share_overall": float(y_bin.mean()),
+               "class_shares": [float((y_cls == k).mean()) for k in range(3)]}
+    return {"per_fire": fm, "summary": summary}

@@ -150,6 +150,14 @@ def cmd_cnn(args, cfg, db):
     print("实验编号", eid)
 
 
+def cmd_classify(args, cfg, db):
+    """分级/二分类口径（文献常用的烈度潜势图口径）：是否高烈度的 AUC、三级分类的总体精度与 Kappa。"""
+    dev = load_samples(db, cfg, "dev")
+    res = model.classify_cv(cfg, dev, _groups(args, cfg), args.algo)
+    print(res["per_fire"].round(3).to_string(index=False))
+    print(json.dumps(res["summary"], ensure_ascii=False, indent=1))
+
+
 def cmd_importance(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
     res = model.cv_variable_importance(cfg, dev, args.algo, _groups(args, cfg))
@@ -354,6 +362,8 @@ def main(argv=None):
     a.add_argument("--patch", type=int, default=15); a.add_argument("--epochs", type=int, default=12)
     a.add_argument("--max-per-fire", type=int, default=0, help="每场火最多用多少样本（省内存/时间）")
     a.set_defaults(f=cmd_cnn)
+    a = sub.add_parser("classify"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
+    a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_classify)
     a = sub.add_parser("importance"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_importance)
     a = sub.add_parser("inspect"); a.add_argument("--fires", nargs="*"); a.add_argument("--n", type=int, default=8)

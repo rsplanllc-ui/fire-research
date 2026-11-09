@@ -263,3 +263,14 @@ def test_cnn_learns_spatial_signal():
     cfg = load_config(); cfg["model"]["cv_folds"] = 4
     res = cnn.run_cnn_cv(cfg, X, y, fids, epochs=20, batch=32, verbose=False)
     assert res["summary"]["r2_median"] > 0.5
+
+
+def test_classify_cv_runs():
+    from firepipe import model
+    cfg = load_config(); cfg["model"]["cv_folds"] = 3
+    rng = np.random.default_rng(1); n = 900
+    df = pd.DataFrame({"fire_id": np.repeat([f"F{i}" for i in range(6)], 150), "row": 0, "col": 0,
+                       "slope": rng.normal(size=n), "elevation": rng.normal(size=n)})
+    df["dnbr_offset"] = 0.4 + 0.25 * df["slope"] + 0.05 * rng.normal(size=n)
+    res = model.classify_cv(cfg, df, groups=["terrain"], algo="random_forest")
+    assert res["summary"]["auc_pooled"] > 0.85 and res["summary"]["oa3_pooled"] > 0.6
