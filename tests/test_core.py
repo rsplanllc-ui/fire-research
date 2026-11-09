@@ -235,3 +235,17 @@ def test_aggregate_samples():
     a = out[(out["row"] == 0) & (out["col"] == 0)].iloc[0]
     assert a["dnbr_offset"] == pytest.approx(0.2) and a["slope"] == pytest.approx(2.0)
     assert model.aggregate_samples(df, 1) is df
+
+
+def test_cv_variable_importance_runs():
+    from firepipe import model
+    cfg = load_config()
+    rng = np.random.default_rng(0)
+    n = 600
+    df = pd.DataFrame({"fire_id": np.repeat([f"F{i}" for i in range(6)], 100),
+                       "row": rng.integers(0, 50, n), "col": rng.integers(0, 50, n),
+                       "slope": rng.normal(size=n), "elevation": rng.normal(size=n)})
+    df["dnbr_offset"] = 0.5 * df["slope"] + 0.1 * rng.normal(size=n)
+    cfg["model"]["cv_folds"] = 3
+    res = model.cv_variable_importance(cfg, df, "ridge", groups=["terrain"], n_rep=2)
+    assert res.iloc[0]["variable"] == "slope" and res.iloc[0]["r2_median_drop"] > 0.3

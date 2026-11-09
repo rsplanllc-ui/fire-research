@@ -131,6 +131,15 @@ def cmd_within(args, cfg, db):
               "；火场数：", len(res))
 
 
+def cmd_importance(args, cfg, db):
+    dev = load_samples(db, cfg, "dev")
+    res = model.cv_variable_importance(cfg, dev, args.algo, _groups(args, cfg))
+    print(f"基线逐场 R² 中位数 {res.attrs['base']:.3f}；逐变量置换后下降（按火场交叉验证的留出预测）：")
+    print(res.round(4).to_string(index=False))
+    print("\n按因子组汇总（组内变量下降之和）：")
+    print(res.groupby("group")["r2_median_drop"].sum().sort_values(ascending=False).round(4).to_string())
+
+
 def cmd_inspect(args, cfg, db):
     """抽查出图：每场火 4 幅——火前 NBR、去背景 dNBR、火烧范围+火点、土地覆盖。输出到 inspect/ 目录。"""
     import matplotlib
@@ -322,6 +331,8 @@ def main(argv=None):
     a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
     a = sub.add_parser("diag"); a.set_defaults(f=cmd_diag)
+    a = sub.add_parser("importance"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
+    a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_importance)
     a = sub.add_parser("inspect"); a.add_argument("--fires", nargs="*"); a.add_argument("--n", type=int, default=8)
     a.set_defaults(f=cmd_inspect)
     a = sub.add_parser("within-fire"); a.add_argument("--scenario"); a.add_argument("--groups", nargs="*")
