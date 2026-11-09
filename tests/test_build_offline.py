@@ -49,6 +49,8 @@ def test_process_fire_offline(monkeypatch, tmp_path):
     monkeypatch.setattr(sentinel, "build_spectral", fake_spectral)
     monkeypatch.setattr(sentinel, "build_timeseries", lambda cfg, grid, fire, a, b: ({"evergreen_ratio": da(np.full(shape, 0.9))}, {"n_windows_ok": 6, "windows": [1] * 6}))
     monkeypatch.setattr(terrain, "build_terrain", fake_terrain)
+    from firepipe import canopy
+    monkeypatch.setattr(canopy, "build_canopy", lambda cfg, grid: {"canopy_height": np.full(shape, 12.0, "float32")})
     monkeypatch.setattr(landcover, "build_landcover", lambda cfg, grid: da(np.full(shape, 10.0)))
     pts = pd.DataFrame({"lon": [112.97, 113.03], "lat": [25.97, 26.03],
                         "fire_tmax": [30.0, 32.0], "prcp_30d": [10.0, 12.0]})

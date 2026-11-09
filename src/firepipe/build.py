@@ -13,7 +13,7 @@ import pandas as pd
 
 from scipy import ndimage
 
-from . import burn, fireobs, landcover, sentinel, terrain, weather
+from . import burn, canopy, fireobs, landcover, sentinel, terrain, weather
 from .db import DB, sha256
 from .geo import FireGrid
 
@@ -210,6 +210,10 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
             qc["forest_share"] = float(np.mean(wc[perim] == 10))
             if qc["forest_share"] < cfg["qc"]["min_forest_share"]:
                 qc["issues"].append(f"非森林火：火烧范围内林地占比 {qc['forest_share']:.2f}")
+    try:
+        layers.update(canopy.build_canopy(cfg, grid))
+    except Exception as e:
+        qc["notes"].append(f"冠层高度读取失败：{e}")
     for k, v in weather.build_weather(cfg, grid, fire).items():
         layers[k] = v.values.astype("float32")
     layers.update(fireobs.context_layers(layers, res))
@@ -311,6 +315,8 @@ def _source(k: str) -> str:
         return "cop-dem-glo-30"
     if k == "worldcover":
         return "ESA WorldCover 2021 v200"
+    if k.startswith("canopy_"):
+        return "ETH Global Canopy Height 10 m 2020"
     if k.startswith(("fire_", "prcp_", "dry_", "soilm")):
         return "ERA5-Land via Open-Meteo"
     return "sentinel-2-l2a (Earth Search)"
