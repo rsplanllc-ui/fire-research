@@ -3,8 +3,15 @@
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from scipy import ndimage
+
+# ETH 的 libdrive 分享不响应 HEAD 请求，GDAL 需跳过；并允许按 Range 只读窗口
+os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
+os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "YES")
+os.environ.setdefault("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.TIF,.tiff")
 
 from .landcover import worldcover_tiles
 
@@ -19,7 +26,7 @@ def build_canopy(cfg: dict, grid) -> dict[str, np.ndarray]:
     minx, miny, maxx, maxy = grid.bbox_lonlat
     for t in worldcover_tiles(grid.bbox_lonlat):
         url = cfg["canopy"]["eth_url"].format(tile=t)
-        da = xr.open_dataarray(url, engine="rasterio").squeeze(drop=True)
+        da = xr.open_dataarray("/vsicurl/" + url, engine="rasterio").squeeze(drop=True)
         arrs.append(da.rio.clip_box(minx, miny, maxx, maxy))
     da = merge_arrays(arrs) if len(arrs) > 1 else arrs[0]
     nod = da.rio.nodata
