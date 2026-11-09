@@ -137,6 +137,15 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
 
     layers = {k: v.values.astype("float32") for k, v in spec.items()}
     template = spec["dnbr"]
+    # 火前多年时序因子（v1.7）
+    try:
+        tsl, tsm = sentinel.build_timeseries(cfg, grid, fire, spec["nbr_pre"], spec["ndvi_pre"])
+        layers.update({k: v.values.astype("float32") for k, v in tsl.items()})
+        qc["timeseries"] = {"n_windows_ok": tsm["n_windows_ok"], "n_windows": len(tsm["windows"])}
+        if tsm["n_windows_ok"] < 3:
+            qc["notes"].append(f"多年时序窗口只有 {tsm['n_windows_ok']} 个有影像")
+    except Exception as e:
+        qc["notes"].append(f"多年时序因子失败：{e}")
 
     # 火烧范围与背景偏移
     if geom is not None:
@@ -211,6 +220,9 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
         layers["aspect_firewind_angle"] = ang
         layers["firewind_slope_index"] = (layers["fire_windmax"] * np.cos(np.radians(ang))
                                           * np.tan(np.radians(layers["slope"]))).astype("float32")
+        # 迎风暴露：山脊（TPI>0）且面向来风为正，背风谷地为负
+        tpi_n = layers["tpi"] / (np.nanstd(layers["tpi"]) + 1e-6)
+        layers["windward_exposure"] = (tpi_n * np.cos(np.radians(ang))).astype("float32")
 
     # 火中观测（火点）+ 燃烧当天天气
     from datetime import date as _date
@@ -291,8 +303,10 @@ def _source(k: str) -> str:
         return "ERA5-Land via Open-Meteo（燃烧当天）"
     if k.startswith("spread_") or k in {"aspect_wind_angle", "wind_slope_index"}:
         return "火点时序 + DEM + 燃烧当天风向（派生）"
-    if k in {"aspect_firewind_angle", "firewind_slope_index"}:
+    if k in {"aspect_firewind_angle", "firewind_slope_index", "windward_exposure"}:
         return "DEM + 火灾期间主导风向（派生）"
+    if k in {"evergreen_ratio", "ndvi_amp", "nbr_3y_mean", "nbr_trend", "nbr_pre_anom", "ndvi_pre_anom"}:
+        return "sentinel-2-l2a 火前多年季节合成（派生）"
     if k in {"elevation", "slope", "northness", "eastness", "tpi", "twi"}:
         return "cop-dem-glo-30"
     if k == "worldcover":
