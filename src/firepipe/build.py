@@ -163,6 +163,29 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     layers["perimeter"] = perim.astype("float32")
     qc["dnbr_offset_value"] = off
     qc["burned_area_ha"] = float(perim.sum() * res * res / 1e4)
+
+    # v1.6 质检：零散火、云遮挡、低烈度、无火点
+    if qc["perimeter_source"] == "derived_dnbr" and cfg["qc"].get("require_hotspots", True):
+        qc["issues"].append("没有火点，排除")
+        return _finish_early(db, fire, qc)
+    if perim.any():
+        lab, n = ndimage.label(perim)
+        sizes = np.bincount(lab.ravel())[1:]
+        qc["n_patches"] = int(n)
+        qc["largest_patch_share"] = float(sizes.max() / sizes.sum())
+        if qc["largest_patch_share"] < cfg["qc"].get("min_largest_patch_share", 0):
+            qc["issues"].append(f"零散多点火：最大斑块只占 {qc['largest_patch_share']:.2f}（{n} 个斑块）")
+        inside = layers["dnbr_offset"][perim]
+        qc["dnbr_mean_perim"] = float(np.nanmean(inside))
+        if qc["dnbr_mean_perim"] < cfg["qc"].get("min_dnbr_mean", 0):
+            qc["issues"].append(f"低烈度火：范围内平均 dNBR {qc['dnbr_mean_perim']:.2f}")
+    if hot_rc is not None and len(hot_rc):
+        r = np.clip(hot_rc[:, 0], 0, perim.shape[0] - 1); c = np.clip(hot_rc[:, 1], 0, perim.shape[1] - 1)
+        near = ndimage.binary_dilation(_mark(perim.shape, r, c),
+                                       iterations=max(1, int(cfg["burn"]["hotspot_near_m"] / res)))
+        qc["valid_near_hotspots"] = float(np.mean(np.isfinite(layers["dnbr"][near])))
+        if qc["valid_near_hotspots"] < cfg["qc"].get("min_valid_near_hotspots", 0):
+            qc["issues"].append(f"火点周边云遮挡：有效像元比例 {qc['valid_near_hotspots']:.2f}")
     if qc["burned_area_ha"] < cfg["qc"]["min_area_ha"]:
         qc["issues"].append(f"火烧面积过小（<{cfg['qc']['min_area_ha']} 公顷）")
 

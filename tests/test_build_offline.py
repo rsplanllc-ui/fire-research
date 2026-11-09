@@ -11,6 +11,7 @@ def test_process_fire_offline(monkeypatch, tmp_path):
     import copy
     cfg = copy.deepcopy(load_config())
     cfg["grid"]["bbox_half_deg"] = 0.03
+    cfg["qc"]["require_hotspots"] = False      # 离线测试没有火点，仍走阈值法
     fire = {"fire_id": "HN_2022_999", "center_lat": 26.0, "center_lon": 113.0,
             "ignition_date": "2022-10-17", "end_date": "2022-10-20"}
     grid = FireGrid.from_fire(fire, 30, 0.03)
