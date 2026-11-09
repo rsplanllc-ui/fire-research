@@ -155,6 +155,22 @@ def dump_model(model, feats: list[str]) -> bytes:
 
 
 
+def aggregate_samples(df: pd.DataFrame, agg_px: int) -> pd.DataFrame:
+    """把样本按 agg_px×agg_px 像元的方块聚合（数值列取均值），用于“粗尺度上还有多少可解释性”的诊断。
+    row/col 改为方块左上角，便于后续再按 1 km 方块分组。"""
+    if agg_px <= 1:
+        return df
+    d = df.copy()
+    d["_br"], d["_bc"] = d["row"] // agg_px, d["col"] // agg_px
+    num = d.select_dtypes("number").columns.difference(["row", "col", "_br", "_bc"])
+    g = d.groupby(["fire_id", "_br", "_bc"], sort=False)
+    out = g[list(num)].mean()
+    out["n_agg"] = g.size()
+    out = out.reset_index()
+    out["row"], out["col"] = out["_br"] * agg_px, out["_bc"] * agg_px
+    return out.drop(columns=["_br", "_bc"])
+
+
 def within_fire_ceiling(cfg: dict, df: pd.DataFrame, groups: list[str] | None = None,
                         block_px: int = 33, algo: str = "random_forest", min_blocks: int = 5) -> pd.DataFrame:
     """诊断：同一场火内部，按约 1 km 的空间方块分组交叉验证（用本场其他方块训练）。

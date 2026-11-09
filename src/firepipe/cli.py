@@ -110,10 +110,17 @@ def cmd_diag(args, cfg, db):
 
 def cmd_within(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
-    res = model.within_fire_ceiling(cfg, dev, _groups(args, cfg))
-    print(res.to_string(index=False))
-    print("同场内部（1 km 方块交叉验证）逐场 R² 中位数：", round(float(res["r2"].median()), 3),
-          "；四分位：", res["r2"].quantile([0.25, 0.75]).round(3).tolist(), "；火场数：", len(res))
+    res_m = cfg["grid"]["resolution"]
+    scales = [int(v) for v in (args.scales or "30").split(",")]
+    for sc in scales:
+        agg_px = max(1, int(round(sc / res_m)))
+        d = model.aggregate_samples(dev, agg_px)
+        res = model.within_fire_ceiling(cfg, d, _groups(args, cfg), min_blocks=4)
+        if len(scales) == 1:
+            print(res.to_string(index=False))
+        print(f"[聚合尺度 {agg_px * res_m:.0f} m，{len(d)} 个样本] 同场内部（1 km 方块交叉验证）逐场 R² 中位数：",
+              round(float(res["r2"].median()), 3), "；四分位：", res["r2"].quantile([0.25, 0.75]).round(3).tolist(),
+              "；火场数：", len(res))
 
 
 def cmd_final(args, cfg, db):
@@ -253,6 +260,7 @@ def main(argv=None):
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
     a = sub.add_parser("diag"); a.set_defaults(f=cmd_diag)
     a = sub.add_parser("within-fire"); a.add_argument("--scenario"); a.add_argument("--groups", nargs="*")
+    a.add_argument("--scales", default="", help="聚合尺度（米），逗号分隔，如 30,90,150,300")
     a.set_defaults(f=cmd_within)
     a = sub.add_parser("final-test"); a.add_argument("--algo", required=True)
     a.add_argument("--groups", nargs="*"); a.add_argument("--scenario"); a.add_argument("--confirm", action="store_true")

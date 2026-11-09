@@ -16,6 +16,9 @@ on:
       algo:
         description: "final-test / ablation 使用的算法"
         default: lightgbm
+      scales:
+        description: "within-fire 的聚合尺度（米，逗号分隔），如 30,90,150,300"
+        default: "30"
       confirm_final:
         description: "运行最终测试请填 YES"
         default: ""
@@ -46,7 +49,7 @@ jobs:
         run: python -m firepipe.cli diag
       - name: 同场内部上限诊断
         if: inputs.task == 'within-fire'
-        run: python -m firepipe.cli within-fire --scenario ${{ inputs.scenario }}
+        run: python -m firepipe.cli within-fire --scenario ${{ inputs.scenario }} --scales "${{ inputs.scales || '30' }}"
       - name: 最终测试
         if: inputs.task == 'final-test' && inputs.confirm_final == 'YES'
         run: python -m firepipe.cli final-test --algo ${{ inputs.algo }} --scenario ${{ inputs.scenario }} --confirm

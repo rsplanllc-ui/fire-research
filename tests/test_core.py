@@ -224,3 +224,14 @@ def test_fire_behavior_layers():
     assert abs(L["spread_speed"][10, 20] - 300 / 12) < 1e-3   # 10 像元×30 m / 12 小时
     assert np.isnan(L["spread_dir"][10, 10])                  # 第一个火点没有上一时刻
     assert abs(fireobs._ang_diff(np.array([350.0]), np.array([10.0]))[0] - 20) < 1e-6
+
+
+def test_aggregate_samples():
+    from firepipe import model
+    df = pd.DataFrame({"fire_id": ["A"] * 4, "row": [0, 1, 0, 5], "col": [0, 1, 4, 5],
+                       "dnbr_offset": [0.1, 0.3, 0.5, 0.7], "slope": [1.0, 3.0, 5.0, 7.0]})
+    out = model.aggregate_samples(df, 3)
+    assert len(out) == 3 and out["n_agg"].sum() == 4
+    a = out[(out["row"] == 0) & (out["col"] == 0)].iloc[0]
+    assert a["dnbr_offset"] == pytest.approx(0.2) and a["slope"] == pytest.approx(2.0)
+    assert model.aggregate_samples(df, 1) is df
