@@ -131,6 +131,25 @@ def cmd_within(args, cfg, db):
               "；火场数：", len(res))
 
 
+def cmd_cnn(args, cfg, db):
+    """CNN 对比实验：按火场分组交叉验证，和树模型同口径。"""
+    from . import cnn
+    dev = load_samples(db, cfg, "dev")
+    feats = model.feature_list(cfg, _groups(args, cfg))
+    if args.max_per_fire:
+        dev = dev.groupby("fire_id", group_keys=False).apply(
+            lambda d: d.sample(min(len(d), args.max_per_fire), random_state=0))
+    print(f"开发集 {dev['fire_id'].nunique()} 场火，{len(dev)} 个样本；通道 {len(feats)}+1；图块 {args.patch}×{args.patch}")
+    X, y, fids, chans = cnn.build_patches(db, cfg, dev, feats, patch=args.patch)
+    print(f"图块张量 {X.shape}，{X.nbytes / 1e9:.2f} GB")
+    res = cnn.run_cnn_cv(cfg, X, y, fids, epochs=args.epochs)
+    print(json.dumps(res["summary"], ensure_ascii=False))
+    scen = args.scenario or "custom"
+    eid = model.log_experiment(db, cfg, f"dev_cv_cnn_{scen}", "cnn", _groups(args, cfg), res, "dev",
+                               notes=f"patch={args.patch} epochs={args.epochs}")
+    print("实验编号", eid)
+
+
 def cmd_importance(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
     res = model.cv_variable_importance(cfg, dev, args.algo, _groups(args, cfg))
@@ -331,6 +350,10 @@ def main(argv=None):
     a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
     a = sub.add_parser("diag"); a.set_defaults(f=cmd_diag)
+    a = sub.add_parser("cnn"); a.add_argument("--scenario"); a.add_argument("--groups", nargs="*")
+    a.add_argument("--patch", type=int, default=15); a.add_argument("--epochs", type=int, default=12)
+    a.add_argument("--max-per-fire", type=int, default=0, help="每场火最多用多少样本（省内存/时间）")
+    a.set_defaults(f=cmd_cnn)
     a = sub.add_parser("importance"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_importance)
     a = sub.add_parser("inspect"); a.add_argument("--fires", nargs="*"); a.add_argument("--n", type=int, default=8)
