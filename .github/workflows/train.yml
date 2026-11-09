@@ -6,7 +6,7 @@ on:
       task:
         description: "train=开发集交叉验证；ablation=删减因子组；final-test=封存测试（只在开发完成后跑）"
         type: choice
-        options: [train, ablation, within-fire, diag, split-lock, final-test, inspect, importance]
+        options: [train, ablation, within-fire, diag, split-lock, final-test, inspect, importance, cnn]
         default: train
       scenario:
         description: "因子情景：prefire=只用火前因子；with_fire_obs=火前+火中观测（火点）"
@@ -16,6 +16,12 @@ on:
       algo:
         description: "final-test / ablation 使用的算法"
         default: lightgbm
+      epochs:
+        description: "cnn 训练轮数"
+        default: "12"
+      max_per_fire:
+        description: "cnn 每场火最多样本数"
+        default: "1200"
       scales:
         description: "within-fire 的聚合尺度（米，逗号分隔），如 30,90,150,300"
         default: "30"
@@ -56,6 +62,11 @@ jobs:
       - name: 同场内部上限诊断
         if: inputs.task == 'within-fire'
         run: python -m firepipe.cli within-fire --scenario ${{ inputs.scenario }} --scales "${{ inputs.scales || '30' }}"
+      - name: CNN 对比实验
+        if: inputs.task == 'cnn'
+        run: |
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          python -m firepipe.cli cnn --scenario ${{ inputs.scenario }} --epochs ${{ inputs.epochs || '12' }} --max-per-fire ${{ inputs.max_per_fire || '1200' }}
       - name: 逐变量重要性
         if: inputs.task == 'importance'
         run: python -m firepipe.cli importance --algo ${{ inputs.algo }} --scenario ${{ inputs.scenario }}

@@ -249,3 +249,17 @@ def test_cv_variable_importance_runs():
     cfg["model"]["cv_folds"] = 3
     res = model.cv_variable_importance(cfg, df, "ridge", groups=["terrain"], n_rep=2)
     assert res.iloc[0]["variable"] == "slope" and res.iloc[0]["r2_median_drop"] > 0.3
+
+
+def test_cnn_learns_spatial_signal():
+    pytest.importorskip("torch")
+    from firepipe import cnn
+    rng = np.random.default_rng(0)
+    n, P = 800, 9
+    X = rng.normal(size=(n, 3, P, P)).astype("float16")
+    # 目标取决于邻域均值（空间信息），单像元看不到
+    y = (X[:, 0].astype("float32").mean(axis=(1, 2)) * 2 + 0.05 * rng.normal(size=n)).astype("float32")
+    fids = np.repeat([f"F{i}" for i in range(8)], 100)
+    cfg = load_config(); cfg["model"]["cv_folds"] = 4
+    res = cnn.run_cnn_cv(cfg, X, y, fids, epochs=20, batch=32, verbose=False)
+    assert res["summary"]["r2_median"] > 0.5
