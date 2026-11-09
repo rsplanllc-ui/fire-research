@@ -145,7 +145,7 @@ def cmd_cnn(args, cfg, db):
     res = cnn.run_cnn_cv(cfg, X, y, fids, epochs=args.epochs)
     print(json.dumps(res["summary"], ensure_ascii=False))
     scen = args.scenario or "custom"
-    eid = model.log_experiment(db, cfg, f"dev_cv_cnn_{scen}", "cnn", _groups(args, cfg), res, "dev",
+    eid = model.log_experiment(db, cfg, f"dev_cv_cnn_{scen}", "cnn", _groups(args, cfg), res, "cv",
                                notes=f"patch={args.patch} epochs={args.epochs}")
     print("实验编号", eid)
 
