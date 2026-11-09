@@ -109,6 +109,38 @@ def grouped_permutation(model, X: pd.DataFrame, y, cfg: dict, seed: int = 0) -> 
     return pd.DataFrame(rows).sort_values("r2_drop_mean", ascending=False)
 
 
+def cv_variable_importance(cfg: dict, df: pd.DataFrame, algo: str, groups: list[str] | None = None,
+                           n_rep: int = 3, seed: int = 0) -> pd.DataFrame:
+    """按火场分组交叉验证下的逐变量置换重要性：每折在留出火场上打乱一个变量，看逐场 R² 中位数掉多少。
+    用留出火场而不是训练集，衡量的是“对新火场泛化”的贡献。"""
+    feats = feature_list(cfg, groups)
+    target = cfg["model"]["target"]
+    X, y = _xy(df, feats, target)
+    fires = df["fire_id"].values
+    rng = np.random.default_rng(seed)
+    preds = {f: np.full(len(df), np.nan) for f in ["__base__"] + feats}
+    for tr, te in GroupKFold(n_splits=cfg["model"]["cv_folds"]).split(X, y, fires):
+        m = clone(make_model(algo)).fit(X.iloc[tr], y[tr])
+        Xte = X.iloc[te]
+        preds["__base__"][te] = m.predict(Xte)
+        for f in feats:
+            acc = np.zeros(len(te))
+            for _ in range(n_rep):
+                Xp = Xte.copy(); Xp[f] = Xte[f].values[rng.permutation(len(te))]
+                acc += m.predict(Xp)
+            preds[f][te] = acc / n_rep
+
+    def med(p):
+        d = pd.DataFrame({"fire_id": fires, "y": y, "p": p})
+        return float(d.groupby("fire_id").apply(lambda g: r2(g["y"].values, g["p"].values)).median())
+    base = med(preds["__base__"])
+    grp = {c: g for g, cols in cfg["model"]["features"].items() for c in cols}
+    rows = [{"variable": f, "group": grp.get(f, "?"), "r2_median_drop": base - med(preds[f])} for f in feats]
+    out = pd.DataFrame(rows).sort_values("r2_median_drop", ascending=False).reset_index(drop=True)
+    out.attrs["base"] = base
+    return out
+
+
 def git_sha() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
