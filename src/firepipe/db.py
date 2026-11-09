@@ -67,8 +67,18 @@ class DB:
     def upload(self, local: str | Path, remote: str, content_type: str = "application/octet-stream") -> str:
         data = Path(local).read_bytes()
         h = {**self.h, "Content-Type": content_type, "x-upsert": "true"}
-        r = requests.post(f"{self.url}/storage/v1/object/{BUCKET}/{remote}", headers=h,
-                          data=data, timeout=max(self.timeout, 300))
+        import time
+        for i in range(5):                      # 存储网关偶发 5xx（Cloudflare 页面），退避重试
+            try:
+                r = requests.post(f"{self.url}/storage/v1/object/{BUCKET}/{remote}", headers=h,
+                                  data=data, timeout=max(self.timeout, 300))
+                if r.status_code < 500 and r.status_code != 429:
+                    self._check(r)
+                    return remote
+            except requests.RequestException:
+                if i == 4:
+                    raise
+            time.sleep(10 * (i + 1))
         self._check(r)
         return remote
 
