@@ -137,8 +137,8 @@ def cmd_cnn(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
     feats = model.feature_list(cfg, _groups(args, cfg))
     if args.max_per_fire:
-        dev = dev.groupby("fire_id", group_keys=False).apply(
-            lambda d: d.sample(min(len(d), args.max_per_fire), random_state=0))
+        dev = dev.sample(frac=1, random_state=0)
+        dev = dev[dev.groupby("fire_id").cumcount() < args.max_per_fire].reset_index(drop=True)
     print(f"开发集 {dev['fire_id'].nunique()} 场火，{len(dev)} 个样本；通道 {len(feats)}+1；图块 {args.patch}×{args.patch}")
     X, y, fids, chans = cnn.build_patches(db, cfg, dev, feats, patch=args.patch)
     print(f"图块张量 {X.shape}，{X.nbytes / 1e9:.2f} GB")
