@@ -3,6 +3,9 @@ name: 用火点核准起止日期
 on:
   workflow_dispatch:
     inputs:
+      drive:
+        description: "yes=只核准 Drive 清单导入的火场"
+        default: "no"
       all:
         description: "已有日期的火场也重新核准（yes/no）"
         default: "yes"
@@ -19,4 +22,4 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - run: pip install -r requirements.txt && pip install -e .
-      - run: python -m firepipe.cli refine-dates ${{ inputs.all == 'yes' && '--all' || '' }}
+      - run: python -m firepipe.cli refine-dates ${{ inputs.all == 'yes' && '--all' || '' }} ${{ inputs.drive == 'yes' && '--drive' || '' }}

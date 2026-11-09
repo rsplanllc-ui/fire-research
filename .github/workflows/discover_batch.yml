@@ -6,6 +6,9 @@ on:
       provinces:
         description: "只跑这些省份（空格分隔，留空=全部）"
         default: ""
+      top:
+        description: "每省每季取火点最多的前几场（留空用配置值 10）"
+        default: ""
       seasons:
         description: "火季（空格分隔，形如 2019-10-01:2020-04-30；留空=用配置）"
         default: ""
@@ -25,4 +28,4 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - run: pip install -r requirements.txt && pip install -e .
-      - run: python -m firepipe.cli discover-batch ${{ inputs.provinces && format('--provinces {0}', inputs.provinces) || '' }} ${{ inputs.seasons && format('--seasons {0}', inputs.seasons) || '' }}
+      - run: python -m firepipe.cli discover-batch ${{ inputs.top && format('--top {0}', inputs.top) || '' }} ${{ inputs.provinces && format('--provinces {0}', inputs.provinces) || '' }} ${{ inputs.seasons && format('--seasons {0}', inputs.seasons) || '' }}

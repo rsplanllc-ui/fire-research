@@ -331,7 +331,9 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
     done = {a["fire_id"] for a in db.select("data_assets", {"variable": "eq.samples",
                                                             "pipeline_version": f"eq.{ver}",
                                                             "select": "fire_id"})}
-    if split:                                   # 只处理某个划分（如 dev），省算力；测试集留到要用时再做
+    if split == "none":                         # 只处理还没划分的新火场
+        fires = [f for f in fires if not f.get("split")]
+    elif split:                                 # 只处理某个划分（如 dev），省算力；测试集留到要用时再做
         fires = [f for f in fires if f.get("split") == split]
     todo = [f for f in fires if f["fire_id"] not in done
             and all(f.get(k) for k in ("ignition_date", "end_date", "center_lat", "center_lon"))

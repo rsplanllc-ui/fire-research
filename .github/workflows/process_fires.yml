@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       split:
-        description: "只处理某个划分（dev / test），留空为全部"
+        description: "只处理某个划分（dev / test / none=未划分的新火场），留空为全部"
         default: ""
       limit:
         description: "每个分片本次最多处理几个火场"

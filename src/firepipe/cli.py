@@ -246,7 +246,8 @@ def cmd_discover_batch(args, cfg, db):
             print(f"== {prov} {start}～{end}")
             try:
                 cmd_discover(SimpleNamespace(bbox=bbox, start=start, end=end, province=prov,
-                                             min_points=d["min_points"], top=d["top_per_group"]), cfg, db)
+                                             min_points=d["min_points"],
+                                             top=args.top or d["top_per_group"]), cfg, db)
             except Exception as e:
                 print("失败：", e)
 
@@ -267,7 +268,10 @@ def _next_ids(df, existing):
 def cmd_refine(args, cfg, db):
     fires = db.select("fires", {"select": "*", "center_lat": "not.is.null"})
     for f in fires:
-        if f.get("ignition_date") and not args.all:
+        if args.drive:        # 只核准来自 Drive 清单、还没用火点核准过的火场
+            if not f.get("legacy_drive_folder_id") or "FIRMS" in (f.get("qc_notes") or ""):
+                continue
+        elif f.get("ignition_date") and not args.all:
             continue
         lat, lon = f["center_lat"], f["center_lon"]
         if f.get("ignition_date"):
@@ -300,10 +304,12 @@ def main(argv=None):
     a.add_argument("--top", type=int)
     a.set_defaults(f=cmd_discover)
     a = sub.add_parser("discover-batch"); a.add_argument("--provinces", nargs="*")
+    a.add_argument("--top", type=int, default=0, help="每省每季取前几场，0 用配置值")
     a.add_argument("--seasons", nargs="*", help="形如 2019-10-01:2020-04-30")
     a.set_defaults(f=cmd_discover_batch)
     a = sub.add_parser("refine-dates"); a.add_argument("--all", action="store_true",
                                                         help="已有日期的也重新核对")
+    a.add_argument("--drive", action="store_true", help="只核准 Drive 清单导入、未核准过的火场")
     a.set_defaults(f=cmd_refine)
     a = sub.add_parser("split"); a.add_argument("--lock", action="store_true"); a.set_defaults(f=cmd_split)
     a = sub.add_parser("process"); a.add_argument("--limit", type=int, default=20)
