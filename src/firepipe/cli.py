@@ -110,7 +110,7 @@ def cmd_diag(args, cfg, db):
 
 def cmd_within(args, cfg, db):
     dev = load_samples(db, cfg, "dev")
-    res_m = cfg["grid"]["resolution"]
+    res_m = cfg["grid"]["resolution_m"]
     scales = [int(v) for v in (args.scales or "30").split(",")]
     for sc in scales:
         agg_px = max(1, int(round(sc / res_m)))
