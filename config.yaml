@@ -71,7 +71,8 @@ qc:
   require_hotspots: true         # 没有 VIIRS 火点的火场直接排除，不退回纯阈值法
 
 canopy:
-  eth_url: "https://libdrive.ethz.ch/index.php/s/cO8or7iOe5dT2Rt/download?path=%2F3deg_cogs&files=ETH_GlobalCanopyHeight_10m_2020_{tile}_Map.tif"
+  meta_index_url: "https://dataforgood-fb-data.s3.amazonaws.com/forests/v1/alsgedi_global_v6_float/tiles.geojson"
+  meta_tile_url: "https://dataforgood-fb-data.s3.amazonaws.com/forests/v1/alsgedi_global_v6_float/chm/{tile}.tif"
 
 timeseries:
   years: 3                  # 火前几年的季节合成

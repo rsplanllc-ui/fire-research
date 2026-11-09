@@ -316,7 +316,7 @@ def _source(k: str) -> str:
     if k == "worldcover":
         return "ESA WorldCover 2021 v200"
     if k.startswith("canopy_"):
-        return "ETH Global Canopy Height 10 m 2020"
+        return "Meta/WRI Global Canopy Height 1 m (Tolan et al. 2024)"
     if k.startswith(("fire_", "prcp_", "dry_", "soilm")):
         return "ERA5-Land via Open-Meteo"
     return "sentinel-2-l2a (Earth Search)"
