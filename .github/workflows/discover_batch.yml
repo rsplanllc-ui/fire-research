@@ -4,28 +4,51 @@ on:
   workflow_dispatch:
     inputs:
       provinces:
-        description: "只跑这些省份（空格分隔，留空=全部）"
+        description: "只跑这些省份（空格分隔，留空=配置里全部 14 个）"
         default: ""
       top:
-        description: "每省每季取火点最多的前几场（留空用配置值 10）"
+        description: "每省每季取火点最多的前几场（留空用配置值）"
         default: ""
       seasons:
         description: "火季（空格分隔，形如 2019-10-01:2020-04-30；留空=用配置）"
         default: ""
 
-concurrency: discover   # 同一时间只跑一个发现任务，避免编号冲突
+concurrency: discover
 
 jobs:
-  discover:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    outputs:
+      provinces: ${{ steps.p.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: |
+          pip install -q pyyaml
+          python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, yaml, os
+          inp = "${{ inputs.provinces }}".split()
+          allp = list(yaml.safe_load(open("config.yaml"))["discovery"]["regions"])
+          print("list=" + json.dumps(inp or allp, ensure_ascii=False))
+          EOF
+
+  discover:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 2          # 每个作业一个省份，编号按省份前缀不会冲突；并行 2 个控制 FIRMS 配额
+      matrix:
+        province: ${{ fromJson(needs.plan.outputs.provinces) }}
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - run: pip install -r requirements.txt && pip install -e .
-      - run: python -m firepipe.cli discover-batch ${{ inputs.top && format('--top {0}', inputs.top) || '' }} ${{ inputs.provinces && format('--provinces {0}', inputs.provinces) || '' }} ${{ inputs.seasons && format('--seasons {0}', inputs.seasons) || '' }}
+      - run: python -m firepipe.cli discover-batch --provinces "${{ matrix.province }}" ${{ inputs.top && format('--top {0}', inputs.top) || '' }} ${{ inputs.seasons && format('--seasons {0}', inputs.seasons) || '' }}

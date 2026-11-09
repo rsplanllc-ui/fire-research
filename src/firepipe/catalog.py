@@ -9,7 +9,7 @@ import pandas as pd
 PROVINCE_CODE = {
     "湖南": "HN", "江西": "JX", "广东": "GD", "广西": "GX", "福建": "FJ",
     "浙江": "ZJ", "安徽": "AH", "湖北": "HB", "贵州": "GZ", "云南": "YN",
-    "四川": "SC", "重庆": "CQ", "海南": "HI",
+    "四川": "SC", "重庆": "CQ", "海南": "HI", "江苏": "JS",
 }
 
 REQUIRED = ["name_cn", "ignition_date", "end_date", "center_lat", "center_lon"]

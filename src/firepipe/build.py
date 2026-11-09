@@ -329,7 +329,7 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
     from . import catalog
     allf = pd.DataFrame(db.select("fires", {"qc_status": "neq.excluded", "select": "*"}))
     if not allf.empty:
-        for keep, drop, km in catalog.find_duplicates(allf):
+        for keep, drop, km in catalog.find_duplicates(allf, cfg['discovery'].get('dedupe_km', 3)):
             db.update("fires", {"fire_id": drop},
                       {"qc_status": "excluded",
                        "qc_notes": f"与 {keep} 为同一场火（中心相距 {km:.2f} km、日期重叠），已排除避免重复"})
