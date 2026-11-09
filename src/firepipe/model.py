@@ -190,5 +190,6 @@ def within_fire_ceiling(cfg: dict, df: pd.DataFrame, groups: list[str] | None = 
         for tr, te in GroupKFold(n_splits=min(5, nb)).split(X, y, blocks):
             m = clone(make_model(algo)).fit(X.iloc[tr], y[tr])
             pred[te] = m.predict(X.iloc[te])
-        rows.append({"fire_id": fid, "n_pixels": len(d), "n_blocks": nb, "r2": r2(y, pred)})
+        rows.append({"fire_id": fid, "n_pixels": len(d), "n_blocks": nb, "r2": r2(y, pred),
+                     "dnbr_mean": float(np.mean(y)), "dnbr_std": float(np.std(y))})
     return pd.DataFrame(rows)

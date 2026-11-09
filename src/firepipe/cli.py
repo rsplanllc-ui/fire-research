@@ -117,10 +117,67 @@ def cmd_within(args, cfg, db):
         d = model.aggregate_samples(dev, agg_px)
         res = model.within_fire_ceiling(cfg, d, _groups(args, cfg), min_blocks=4)
         if len(scales) == 1:
-            print(res.to_string(index=False))
+            fires = pd.DataFrame(db.select("fires", {"select": "fire_id,ignition_date,province"}))
+            res = res.merge(fires, on="fire_id", how="left")
+            res["year"] = pd.to_datetime(res["ignition_date"]).dt.year
+            print(res.drop(columns=["ignition_date"]).round(3).to_string(index=False))
+            res["sev"] = pd.cut(res["dnbr_mean"], [-1, 0.25, 0.4, 9], labels=["低(<0.25)", "中(0.25-0.4)", "高(>0.4)"])
+            res["var"] = pd.cut(res["dnbr_std"], [-1, 0.15, 0.22, 9], labels=["小(<0.15)", "中(0.15-0.22)", "大(>0.22)"])
+            for key, title in [("sev", "按火场平均 dNBR"), ("var", "按场内 dNBR 标准差"), ("year", "按年份"), ("province", "按省份")]:
+                g = res.groupby(key, observed=True)["r2"].agg(["median", "count"]).round(3)
+                print(f"\n{title}分组的场内 R² 中位数：\n{g.to_string()}")
         print(f"[聚合尺度 {agg_px * res_m:.0f} m，{len(d)} 个样本] 同场内部（1 km 方块交叉验证）逐场 R² 中位数：",
               round(float(res["r2"].median()), 3), "；四分位：", res["r2"].quantile([0.25, 0.75]).round(3).tolist(),
               "；火场数：", len(res))
+
+
+def cmd_inspect(args, cfg, db):
+    """抽查出图：每场火 4 幅——火前 NBR、去背景 dNBR、火烧范围+火点、土地覆盖。输出到 inspect/ 目录。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import rioxarray  # noqa: F401
+    import rasterio
+    ver = cfg["pipeline_version"]
+    fires = {f["fire_id"]: f for f in db.select("fires", {"select": "fire_id,name_cn,province,ignition_date,split,qc_status"})}
+    ids = args.fires or sorted(f for f, v in fires.items() if v["split"] == "dev" and v["qc_status"] == "ok")[:args.n]
+    out = Path("inspect"); out.mkdir(exist_ok=True)
+    tmp = Path(tempfile.mkdtemp())
+    for fid in ids:
+        L = {}
+        for k in ("nbr_pre", "dnbr_offset", "perimeter", "hs_dist", "worldcover", "burn_day"):
+            try:
+                with rasterio.open(db.download(f"processed/{ver}/{fid}/{k}.tif", tmp / f"{fid}_{k}.tif")) as src:
+                    L[k] = src.read(1)
+            except Exception as e:
+                print(f"{fid} 缺 {k}：{e}")
+        if "dnbr_offset" not in L:
+            continue
+        f = fires[fid]
+        fig, ax = plt.subplots(1, 4, figsize=(20, 5.2))
+        fig.suptitle(f"{fid} {f.get('name_cn') or ''} {f.get('province') or ''} {f.get('ignition_date')}", fontsize=13)
+        im = ax[0].imshow(L.get("nbr_pre"), cmap="RdYlGn", vmin=-0.2, vmax=0.8); ax[0].set_title("NBR pre-fire"); plt.colorbar(im, ax=ax[0], fraction=0.04)
+        im = ax[1].imshow(L["dnbr_offset"], cmap="inferno_r", vmin=-0.2, vmax=0.8); ax[1].set_title("dNBR (background removed)"); plt.colorbar(im, ax=ax[1], fraction=0.04)
+        ax[2].imshow(L["dnbr_offset"], cmap="Greys_r", vmin=-0.3, vmax=1.0)
+        if "perimeter" in L:
+            ax[2].contour(L["perimeter"] > 0.5, levels=[0.5], colors="red", linewidths=0.8)
+        if "hs_dist" in L:
+            rr, cc = np.where(L["hs_dist"] <= 0.5)
+            bd = L.get("burn_day")
+            ax[2].scatter(cc, rr, s=6, c=(bd[rr, cc] if bd is not None else "cyan"), cmap="viridis", edgecolors="none")
+        ax[2].set_title("perimeter (red) + hotspots (color=burn day)")
+        if "worldcover" in L:
+            ax[3].imshow(L["worldcover"], cmap="tab20", vmin=10, vmax=100); ax[3].set_title("WorldCover (10=tree)")
+            if "perimeter" in L:
+                ax[3].contour(L["perimeter"] > 0.5, levels=[0.5], colors="red", linewidths=0.8)
+        for a in ax:
+            a.set_xticks([]); a.set_yticks([])
+        fig.tight_layout()
+        fig.savefig(out / f"{fid}.png", dpi=110)
+        plt.close(fig)
+        inside = L["dnbr_offset"][L.get("perimeter", np.ones_like(L["dnbr_offset"])) > 0.5]
+        print(f"{fid}: 范围内 dNBR 均值 {np.nanmean(inside):.3f} 标准差 {np.nanstd(inside):.3f}，"
+              f"<0.1 的像元占 {np.nanmean(inside < 0.1):.2f}，>0.44 的占 {np.nanmean(inside > 0.44):.2f}")
 
 
 def cmd_final(args, cfg, db):
@@ -259,6 +316,8 @@ def main(argv=None):
     a = sub.add_parser("ablation"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_ablation)
     a = sub.add_parser("diag"); a.set_defaults(f=cmd_diag)
+    a = sub.add_parser("inspect"); a.add_argument("--fires", nargs="*"); a.add_argument("--n", type=int, default=8)
+    a.set_defaults(f=cmd_inspect)
     a = sub.add_parser("within-fire"); a.add_argument("--scenario"); a.add_argument("--groups", nargs="*")
     a.add_argument("--scales", default="", help="聚合尺度（米），逗号分隔，如 30,90,150,300")
     a.set_defaults(f=cmd_within)
