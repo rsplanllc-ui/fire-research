@@ -173,8 +173,11 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
         sizes = np.bincount(lab.ravel())[1:]
         qc["n_patches"] = int(n)
         qc["largest_patch_share"] = float(sizes.max() / sizes.sum())
-        if qc["largest_patch_share"] < cfg["qc"].get("min_largest_patch_share", 0):
-            qc["issues"].append(f"零散多点火：最大斑块只占 {qc['largest_patch_share']:.2f}（{n} 个斑块）")
+        qc["largest_patch_ha"] = float(sizes.max() * res * res / 1e4)
+        if (qc["largest_patch_share"] < cfg["qc"].get("min_largest_patch_share", 0)
+                and qc["largest_patch_ha"] < cfg["qc"].get("min_largest_patch_ha", 0)):
+            qc["issues"].append(f"零散多点火：最大斑块只占 {qc['largest_patch_share']:.2f}、"
+                                f"{qc['largest_patch_ha']:.0f} 公顷（{n} 个斑块）")
         inside = layers["dnbr_offset"][perim]
         qc["dnbr_mean_perim"] = float(np.nanmean(inside))
         if qc["dnbr_mean_perim"] < cfg["qc"].get("min_dnbr_mean", 0):

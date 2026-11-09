@@ -64,7 +64,8 @@ qc:
   min_forest_share: 0.5    # 火烧范围内 WorldCover 林地占比下限
   min_area_ha: 20
   min_samples: 30
-  min_largest_patch_share: 0.6   # 最大连通斑块占火烧范围的比例下限；低于此视为零散多点火，不是一场林火
+  min_largest_patch_share: 0.6   # 最大连通斑块占比低于此、且最大斑块面积也小于下面的值，才视为零散多点火
+  min_largest_patch_ha: 200      # 大火多火头是正常的，最大斑块够大就不算零散
   min_valid_near_hotspots: 0.8   # 火点周边（hotspot_near_m 内）dNBR 有效像元比例下限（云、阴影）
   min_dnbr_mean: 0.20            # 火烧范围内平均 dNBR 下限；更低的多为林下轻度地表火，卫星几乎看不到
   require_hotspots: true         # 没有 VIIRS 火点的火场直接排除，不退回纯阈值法
