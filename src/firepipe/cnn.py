@@ -47,10 +47,13 @@ def build_patches(db, cfg: dict, samples: pd.DataFrame, feats: list[str], patch:
             mu[f] = float(np.nanmean(col)) if col.notna().any() else 0.0
             sd[f] = float(np.nanstd(col)) if col.notna().any() and np.nanstd(col) > 0 else 1.0
     Xs, ys, fids = [], [], []
-    for fid, d in samples.groupby("fire_id"):
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=12)
+    n_f = samples["fire_id"].nunique()
+    for i_f, (fid, d) in enumerate(samples.groupby("fire_id")):
         layers = {}
-        for f in chans:
-            a = _read(db, ver, fid, f, tmp)
+        arrs = list(pool.map(lambda f: _read(db, ver, fid, f, tmp), chans))   # 并行下载该火场全部图层
+        for f, a in zip(chans, arrs):
             if a is None:
                 continue
             if f == "worldcover":
@@ -58,6 +61,8 @@ def build_patches(db, cfg: dict, samples: pd.DataFrame, feats: list[str], patch:
             else:
                 a = (a - mu[f]) / sd[f]
             layers[f] = a
+        if i_f % 10 == 0:
+            print(f"  切图块 {i_f + 1}/{n_f} 场…", flush=True)
         if not layers:
             continue
         shape = next(iter(layers.values())).shape
