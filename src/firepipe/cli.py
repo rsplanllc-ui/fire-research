@@ -23,7 +23,7 @@ import pandas as pd
 
 from datetime import date, timedelta
 
-from . import build, catalog, firms, model
+from . import http, build, catalog, firms, model
 from .config import feature_list, load_config
 from .db import DB, now
 
@@ -150,6 +150,87 @@ def cmd_cnn(args, cfg, db):
     print("实验编号", eid)
 
 
+def cmd_fix_provinces(args, cfg, db):
+    """用省级行政边界给每场火重新判定省份（发现时用的是重叠的矩形框，标签不准），境外的火排除。"""
+    from shapely.geometry import shape, Point
+    from shapely.prepared import prep
+    gj = http.get(cfg["discovery"]["province_geojson"]).json()
+    polys = []
+    for ft in gj["features"]:
+        nm = (ft["properties"].get("name") or "").strip()
+        if not nm:
+            continue
+        short = "内蒙古" if nm.startswith("内蒙古") else "黑龙江" if nm.startswith("黑龙江") else nm[:2]
+        polys.append((short, prep(shape(ft["geometry"]))))
+    fires = db.select("fires", {"select": "fire_id,province,center_lat,center_lon,qc_status,qc_notes"})
+    changed = abroad = 0
+    for f in fires:
+        if f["center_lat"] is None:
+            continue
+        pt = Point(float(f["center_lon"]), float(f["center_lat"]))
+        prov = next((n for n, g in polys if g.contains(pt)), None)
+        if prov is None:
+            if "境外" not in (f.get("qc_notes") or ""):
+                db.update("fires", {"fire_id": f["fire_id"]},
+                          {"province": "境外", "qc_status": "excluded",
+                           "qc_notes": "境外：中心点不在中国省级行政区内；" + (f.get("qc_notes") or "")})
+                abroad += 1
+        elif prov != f["province"]:
+            db.update("fires", {"fire_id": f["fire_id"]}, {"province": prov})
+            changed += 1
+    print(f"共 {len(fires)} 场：改省份 {changed} 场，境外排除 {abroad} 场")
+
+
+def cmd_checklist(args, cfg, db):
+    """导出核对表：合格火场一张、未通过一张（CSV，Excel 可直接打开）。"""
+    ver = cfg["pipeline_version"]
+    fires = pd.DataFrame(db.select("fires", {"select": "*"}))
+    runs = pd.DataFrame(db.select("pipeline_runs", {"select": "fire_id,status,started_at,log", "status": "eq.done",
+                                                    "order": "started_at.desc,id.desc"}))
+    logs = {}
+    for _, r in runs.iterrows():
+        if r.fire_id in logs:
+            continue
+        try:
+            j = json.loads(r.log)
+        except Exception:
+            continue
+        if j.get("pipeline_version") == ver:
+            logs[r.fire_id] = j
+    rows = []
+    for _, f in fires.sort_values(["province", "ignition_date"]).iterrows():
+        j = logs.get(f.fire_id, {})
+        s2 = j.get("sentinel", {})
+        def rng(k):
+            d = (s2.get(k) or {}).get("dates") or []
+            return f"{d[0]}~{d[-1]}（{len(d)}景）" if d else ""
+        issues = "；".join(j.get("issues") or []) or ("" if f.qc_status == "ok" else (f.qc_notes or "未处理"))
+        rows.append({
+            "编号": f.fire_id, "省份": f.province, "起火日期": f.ignition_date, "结束日期": f.end_date,
+            "纬度": round(float(f.center_lat), 4), "经度": round(float(f.center_lon), 4),
+            "来源": "Drive清单+火点核准" if f.get("legacy_drive_folder_id") == "drive" else "FIRMS VIIRS 火点自动发现",
+            "火点数": j.get("n_hotspots"), "火点日期": "~".join(j.get("hotspot_dates") or []),
+            "火前影像": rng("pre"), "火前有效像元": (s2.get("pre") or {}).get("valid_fraction"),
+            "火后影像": rng("post"), "火后有效像元": (s2.get("post") or {}).get("valid_fraction"),
+            "火烧面积ha": j.get("burned_area_ha"), "林地占比": j.get("forest_share", j.get("forest_share_hotspots")),
+            "平均dNBR": j.get("dnbr_mean_perim"), "最大斑块占比": j.get("largest_patch_share"),
+            "样本数": j.get("n_samples"), "是否核实火烧迹地": "是（火点+dNBR>0.10 连通斑块）" if j.get("burned_area_ha") else "否",
+            "质检结论": "合格" if f.qc_status == "ok" else "未通过", "未通过原因": issues,
+            "现有划分": f.get("split") or "", "FIRMS地图": f"https://firms.modaps.eosdis.nasa.gov/map/#d:{f.ignition_date};@{float(f.center_lon):.3f},{float(f.center_lat):.3f},12.0z",
+        })
+    out = pd.DataFrame(rows)
+    Path("inspect").mkdir(exist_ok=True)
+    ok = out[out["质检结论"] == "合格"]; bad = out[out["质检结论"] != "合格"]
+    ok.to_csv("inspect/核对表_合格火场.csv", index=False, encoding="utf-8-sig", float_format="%.3f")
+    bad.to_csv("inspect/核对表_未通过火场.csv", index=False, encoding="utf-8-sig", float_format="%.3f")
+    print(f"合格 {len(ok)} 场，未通过 {len(bad)} 场")
+    print(ok.groupby("省份").size().sort_values(ascending=False).to_string())
+    print("按年份："); print(pd.to_datetime(ok["起火日期"]).dt.year.value_counts().sort_index().to_string())
+    a = pd.to_numeric(ok["火烧面积ha"])
+    print("面积分布：", {"<50": int((a < 50).sum()), "50-200": int(((a >= 50) & (a < 200)).sum()),
+                     "200-1000": int(((a >= 200) & (a < 1000)).sum()), ">=1000": int((a >= 1000).sum())})
+
+
 def cmd_classify(args, cfg, db):
     """分级/二分类口径（文献常用的烈度潜势图口径）：是否高烈度的 AUC、三级分类的总体精度与 Kappa。"""
     dev = load_samples(db, cfg, "dev")
@@ -176,7 +257,19 @@ def cmd_inspect(args, cfg, db):
     import rasterio
     ver = cfg["pipeline_version"]
     fires = {f["fire_id"]: f for f in db.select("fires", {"select": "fire_id,name_cn,province,ignition_date,split,qc_status"})}
-    ids = args.fires or sorted(f for f, v in fires.items() if v["split"] == "dev" and v["qc_status"] == "ok")[:args.n]
+    if args.fires:
+        ids = args.fires
+    else:                                    # 优先抽还没划分的新火场，按省份轮流取，尽量分散
+        okf = sorted((v.get("province") or "", f) for f, v in fires.items() if v["qc_status"] == "ok" and not v["split"]) \
+              or sorted((v.get("province") or "", f) for f, v in fires.items() if v["qc_status"] == "ok")
+        byp = {}
+        for pv, f in okf:
+            byp.setdefault(pv, []).append(f)
+        ids = []
+        while len(ids) < args.n and any(byp.values()):
+            for pv in list(byp):
+                if byp[pv] and len(ids) < args.n:
+                    ids.append(byp[pv].pop(len(byp[pv]) // 2))
     out = Path("inspect"); out.mkdir(exist_ok=True)
     tmp = Path(tempfile.mkdtemp())
     for fid in ids:
@@ -362,6 +455,8 @@ def main(argv=None):
     a.add_argument("--patch", type=int, default=15); a.add_argument("--epochs", type=int, default=12)
     a.add_argument("--max-per-fire", type=int, default=0, help="每场火最多用多少样本（省内存/时间）")
     a.set_defaults(f=cmd_cnn)
+    sub.add_parser("fix-provinces").set_defaults(f=cmd_fix_provinces)
+    sub.add_parser("checklist").set_defaults(f=cmd_checklist)
     a = sub.add_parser("classify"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")
     a.add_argument("--groups", nargs="*"); a.set_defaults(f=cmd_classify)
     a = sub.add_parser("importance"); a.add_argument("--algo", default="lightgbm"); a.add_argument("--scenario")

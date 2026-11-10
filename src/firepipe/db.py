@@ -31,10 +31,20 @@ class DB:
             raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text[:1000]}", response=r)
 
     def select(self, table: str, params: dict | None = None) -> list[dict]:
-        r = requests.get(f"{self.url}/rest/v1/{table}", headers=self.h,
-                         params=params or {}, timeout=self.timeout)
-        self._check(r)
-        return r.json()
+        params = dict(params or {})
+        if "limit" in params:
+            r = requests.get(f"{self.url}/rest/v1/{table}", headers=self.h, params=params, timeout=self.timeout)
+            self._check(r)
+            return r.json()
+        out, page = [], 1000                    # 接口单次最多返回 1000 行，分页取全
+        while True:
+            r = requests.get(f"{self.url}/rest/v1/{table}", headers=self.h,
+                             params={**params, "limit": page, "offset": len(out)}, timeout=self.timeout)
+            self._check(r)
+            rows = r.json()
+            out.extend(rows)
+            if len(rows) < page:
+                return out
 
     def upsert(self, table: str, rows: list[dict] | dict, on_conflict: str | None = None) -> list[dict]:
         rows = rows if isinstance(rows, list) else [rows]

@@ -6,7 +6,7 @@ on:
       task:
         description: "train=开发集交叉验证；ablation=删减因子组；final-test=封存测试（只在开发完成后跑）"
         type: choice
-        options: [train, ablation, within-fire, diag, split-lock, final-test, inspect, importance, cnn, classify]
+        options: [train, ablation, within-fire, diag, split-lock, final-test, inspect, importance, cnn, classify, checklist]
         default: train
       scenario:
         description: "因子情景：prefire=只用火前因子；with_fire_obs=火前+火中观测（火点）"
@@ -74,6 +74,12 @@ jobs:
       - name: 逐变量重要性
         if: inputs.task == 'importance'
         run: python -m firepipe.cli importance --algo ${{ inputs.algo }} --scenario ${{ inputs.scenario }}
+      - name: 省份校正与核对表
+        if: inputs.task == 'checklist'
+        run: |
+          python -m firepipe.cli fix-provinces
+          python -m firepipe.cli checklist
+          python -m firepipe.cli inspect --n ${{ inputs.n_inspect || '8' }}
       - name: 抽查出图
         if: inputs.task == 'inspect'
         run: python -m firepipe.cli inspect --n ${{ inputs.n_inspect || '8' }}
@@ -84,12 +90,12 @@ jobs:
           name: inspect
           path: inspect/
       - name: 抽查图推送到 inspect-output 分支
-        if: inputs.task == 'inspect'
+        if: inputs.task == 'inspect' || inputs.task == 'checklist'
         run: |
           git config user.name "fire-bot"; git config user.email "bot@users.noreply.github.com"
           git fetch origin inspect-output || true
           git checkout -B inspect-output
-          git add -f inspect/*.png
+          git add -f inspect/
           git commit -m "抽查图 $(date -u +%FT%H:%M)" || true
           git push -f origin inspect-output
       - name: 最终测试
