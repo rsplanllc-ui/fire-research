@@ -104,7 +104,9 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
     qc: dict = {"fire_id": fire["fire_id"], "pipeline_version": ver, "issues": [], "notes": []}
 
     geom = _boundary(db, fire, workdir)
-    grid = FireGrid.from_fire(fire, cfg["grid"]["resolution_m"], cfg["grid"]["bbox_half_deg"],
+    half = float(fire.get("bbox_half_deg") or cfg["grid"]["bbox_half_deg"])
+    qc["bbox_half_deg"] = half
+    grid = FireGrid.from_fire(fire, cfg["grid"]["resolution_m"], half,
                               boundary_bounds=geom.bounds if geom is not None else None,
                               buffer_m=cfg["grid"]["boundary_buffer_m"])
     res = float(cfg["grid"]["resolution_m"])
@@ -169,6 +171,16 @@ def process_fire(cfg: dict, fire: dict, db: DB | None = None, out_dir: str | Non
         qc["issues"].append("没有火点，火烧范围仅按 dNBR 阈值提取，可靠性低")
         ring = burn.offset_ring(perim, res, cfg["burn"]["unburned_ring_m"])
         off = burn.dnbr_offset(layers["dnbr"], ring)
+    # 大火超出处理框：火烧范围贴到框边就把框放大一倍重做（上限 max_bbox_half_deg）
+    edge = int(perim[:3, :].sum() + perim[-3:, :].sum() + perim[:, :3].sum() + perim[:, -3:].sum())
+    qc["edge_burned_px"] = edge
+    max_half = float(cfg["grid"].get("max_bbox_half_deg", half))
+    if edge > cfg["grid"].get("edge_burned_px_limit", 60):
+        if half < max_half - 1e-6 and db is not None:
+            new_half = min(half * 2, max_half)
+            db.update("fires", {"fire_id": fire["fire_id"]}, {"bbox_half_deg": new_half})
+            return process_fire(cfg, {**fire, "bbox_half_deg": new_half}, db, out_dir)
+        qc["notes"].append(f"火烧范围贴到处理框边缘（{edge} 个像元），框已是最大，范围可能不完整")
     layers["dnbr_offset"] = layers["dnbr"] - off
     layers["perimeter"] = perim.astype("float32")
     qc["dnbr_offset_value"] = off
@@ -342,7 +354,7 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
         fires = [f for f in fires if not f.get("split")]
     elif split:                                 # 只处理某个划分（如 dev），省算力；测试集留到要用时再做
         fires = [f for f in fires if f.get("split") == split]
-    todo = [f for f in fires if f["fire_id"] not in done
+    todo = [f for f in fires if (f["fire_id"] not in done or f.get("reprocess"))
             and all(f.get(k) for k in ("ignition_date", "end_date", "center_lat", "center_lon"))
             and zlib.crc32(f["fire_id"].encode()) % nshards == shard][:limit]
     results = []
@@ -352,6 +364,8 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
         try:
             qc = process_fire(cfg, f, db)
             db.run_end(rid, "done", json.dumps(qc, ensure_ascii=False, default=str))
+            if f.get("reprocess"):
+                db.update("fires", {"fire_id": f["fire_id"]}, {"reprocess": False})
             results.append(qc)
         except Exception:
             tb = traceback.format_exc()

@@ -3,7 +3,9 @@ pipeline_version: "v1.8"   # v1.4：不再使用 STAC 元数据中错误的 -0.1
 
 grid:
   resolution_m: 30          # 统一网格分辨率
-  bbox_half_deg: 0.06       # 没有边界时：以中心点为中心的半边长（度）
+  bbox_half_deg: 0.06       # 没有边界时：以中心点为中心的半边长（度），约 13 km 见方
+  max_bbox_half_deg: 0.18   # 大火自动放大处理框的上限，约 40 km 见方
+  edge_burned_px_limit: 60  # 火烧范围落在框边 3 像元带内超过这么多像元，视为超出处理框
   boundary_buffer_m: 1000   # 有边界时：边界外扩的距离
 
 sentinel2:
@@ -88,7 +90,7 @@ qc:
   min_largest_patch_share: 0.6   # 最大连通斑块占比低于此、且最大斑块面积也小于下面的值，才视为零散多点火
   min_largest_patch_ha: 200      # 大火多火头是正常的，最大斑块够大就不算零散
   min_valid_near_hotspots: 0.8   # 火点周边（hotspot_near_m 内）dNBR 有效像元比例下限（云、阴影）
-  min_dnbr_mean: 0.20            # 火烧范围内平均 dNBR 下限；更低的多为林下轻度地表火，卫星几乎看不到
+  min_dnbr_mean: 0.25            # 火烧范围内平均 dNBR 下限；更低的多为林下轻度地表火，卫星几乎看不到
   require_hotspots: true         # 没有 VIIRS 火点的火场直接排除，不退回纯阈值法
 
 canopy:
