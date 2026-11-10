@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import zlib
 import traceback
@@ -345,6 +346,7 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
             and all(f.get(k) for k in ("ignition_date", "end_date", "center_lat", "center_lon"))
             and zlib.crc32(f["fire_id"].encode()) % nshards == shard][:limit]
     results = []
+    net_fail = 0
     for f in todo:
         rid = db.run_start("process", f["fire_id"])
         try:
@@ -352,6 +354,15 @@ def process_queue(cfg: dict, db: DB, limit: int = 20, shard: int = 0, nshards: i
             db.run_end(rid, "done", json.dumps(qc, ensure_ascii=False, default=str))
             results.append(qc)
         except Exception:
-            db.run_end(rid, "failed", traceback.format_exc())
+            tb = traceback.format_exc()
+            key = os.environ.get("FIRMS_MAP_KEY", "").strip()
+            if key:                                   # 报错里的请求地址带密钥，写库前屏蔽
+                tb = tb.replace(key, "***")
+            db.run_end(rid, "failed", tb)
             db.update("fires", {"fire_id": f["fire_id"]}, {"qc_notes": "处理失败，见 pipeline_runs"})
+            net_fail = net_fail + 1 if ("Network is unreachable" in tb or "NewConnectionError" in tb) else 0
+            if net_fail >= 2:                         # 这台机器连不上外部数据源：直接退出，换机器重跑，别每场空等 19 分钟
+                raise SystemExit(f"连续 {net_fail} 场网络不可达，本分片提前结束")
+        else:
+            net_fail = 0
     return results
