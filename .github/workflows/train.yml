@@ -25,6 +25,9 @@ on:
       scales:
         description: "within-fire 的聚合尺度（米，逗号分隔），如 30,90,150,300"
         default: "30"
+      fires:
+        description: "checklist/inspect 指定火场编号（空格分隔），留空按省份抽"
+        default: ""
       n_inspect:
         description: "inspect 抽查几场火"
         default: "8"
@@ -79,7 +82,7 @@ jobs:
         run: |
           python -m firepipe.cli fix-provinces
           python -m firepipe.cli checklist
-          python -m firepipe.cli inspect --n ${{ inputs.n_inspect || '8' }}
+          python -m firepipe.cli inspect --n ${{ inputs.n_inspect || '8' }} ${{ inputs.fires && format('--fires {0}', inputs.fires) || '' }}
       - name: 抽查出图
         if: inputs.task == 'inspect'
         run: python -m firepipe.cli inspect --n ${{ inputs.n_inspect || '8' }}
