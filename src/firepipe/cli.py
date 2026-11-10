@@ -69,6 +69,32 @@ def cmd_split(args, cfg, db):
             vals["split_locked_at"] = now()
         db.update("fires", {"fire_id": fid}, vals)
     print(s.value_counts().to_dict(), "已锁定" if args.lock else "（未锁定，可重新划分）")
+    fires = fires.assign(split=s.values)
+    print(fires.groupby(["province", "split"]).size().unstack(fill_value=0).to_string())
+    _pick_final_holdout(db, cfg)
+
+
+REGIONS = {"西南": ["云南", "贵州", "四川", "重庆"], "华南": ["广西", "广东", "福建", "海南"],
+           "华中华东": ["湖南", "江西", "湖北", "安徽", "浙江", "江苏"]}
+
+
+def _pick_final_holdout(db, cfg):
+    """从封存集中预留 3 场（西南 / 华南 / 华中华东各 1 场，不同省份）作为论文最后的独立新火场验证。"""
+    allf = pd.DataFrame(db.select("fires", {"select": "fire_id,province,split,final_holdout,qc_status",
+                                              "qc_status": "eq.ok"}))
+    if allf["final_holdout"].fillna(False).any():
+        print("已有预留的最终验证火场：", sorted(allf.loc[allf["final_holdout"] == True, "fire_id"]))
+        return
+    rng = np.random.default_rng(cfg["split"]["seed"] + 1)
+    test = allf[allf["split"] == "test"].sort_values("fire_id")
+    picked = []
+    for region, provs in REGIONS.items():
+        cand = test[test["province"].astype(str).apply(lambda p: any(k in p for k in provs))]
+        if len(cand):
+            picked.append(str(rng.choice(cand["fire_id"].to_numpy())))
+    for fid in picked:
+        db.update("fires", {"fire_id": fid}, {"final_holdout": True})
+    print("预留最终独立验证火场：", picked)
 
 
 def cmd_process(args, cfg, db):
