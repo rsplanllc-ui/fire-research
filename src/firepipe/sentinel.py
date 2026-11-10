@@ -112,6 +112,16 @@ def load_composite(cfg: dict, grid, datetime_range: str, fallback_range: str | N
     valid_frac = float(np.isfinite(comp["nir08"]).mean())
     meta["valid_fraction"] = valid_frac
     meta["n_obs_median"] = float(np.isfinite(allds["nir08"]).sum("time").median())
+    # 标准窗口里有影像但几乎全是云：同样改用放宽的窗口再合成一次
+    if (not relaxed and fallback_range and fallback_range != datetime_range
+            and valid_frac < cfg["sentinel2"].get("min_valid_fraction", 0.6)):
+        try:
+            comp2, meta2 = load_composite(cfg, grid, fallback_range, None, bands, 95)
+            if meta2["valid_fraction"] > valid_frac:
+                meta2["window_relaxed"] = True
+                return comp2, meta2
+        except Exception:
+            pass
     return comp, meta
 
 
