@@ -281,3 +281,65 @@ def classify_cv(cfg: dict, df: pd.DataFrame, groups: list[str] | None = None, al
                "high_share_overall": float(y_bin.mean()),
                "class_shares": [float((y_cls == k).mean()) for k in range(3)]}
     return {"per_fire": fm, "summary": summary}
+
+
+def stratified_compare(cfg: dict, df: pd.DataFrame, strata: pd.Series, groups: list[str] | None = None,
+                       algo: str = "lightgbm", min_train: int = 2000) -> dict:
+    """同一套按火场分组的折里，比较"一个总模型"与"每个分层各自一个小模型"。
+    strata 与 df 行对齐；分层训练样本不足 min_train 时该层退回总模型。"""
+    from sklearn.metrics import roc_auc_score
+    feats = feature_list(cfg, groups)
+    target = cfg["model"]["target"]
+    keep = np.isfinite(df[target].values)
+    d = df[keep].reset_index(drop=True)
+    s = pd.Series(strata.values[keep]).astype(str).values
+    X, y = _xy(d, feats, target)
+    fires = d["fire_id"].values
+    pg = np.full(len(d), np.nan); ps = np.full(len(d), np.nan)
+    for tr, te in GroupKFold(n_splits=min(cfg["model"]["cv_folds"], len(np.unique(fires)))).split(X, y, fires):
+        m = clone(make_model(algo)).fit(X.iloc[tr], y[tr])
+        pg[te] = m.predict(X.iloc[te]); ps[te] = pg[te]
+        for k in np.unique(s[te]):
+            trk = tr[s[tr] == k]; tek = te[s[te] == k]
+            if len(trk) >= min_train and len(np.unique(fires[trk])) >= 5:
+                ps[tek] = clone(make_model(algo)).fit(X.iloc[trk], y[trk]).predict(X.iloc[tek])
+    yb = (y >= HIGH_THRESHOLD).astype(int)
+
+    def summ(p):
+        fm = per_fire(pd.DataFrame({"fire_id": fires, "y": y, "pred": p}))
+        return {"r2_median_per_fire": float(fm["r2"].median()), "r2_pooled": float(r2(y, p)),
+                "auc_high_pooled": float(roc_auc_score(yb, p))}
+    by = []
+    for k in np.unique(s):
+        i = s == k
+        if i.sum() < 500 or len(np.unique(yb[i])) < 2:
+            continue
+        by.append({"stratum": k, "n": int(i.sum()), "fires": int(len(np.unique(fires[i]))),
+                   "r2_global": float(r2(y[i], pg[i])), "r2_small": float(r2(y[i], ps[i])),
+                   "auc_global": float(roc_auc_score(yb[i], pg[i])), "auc_small": float(roc_auc_score(yb[i], ps[i]))})
+    return {"global": summ(pg), "small_models": summ(ps), "by_stratum": pd.DataFrame(by)}
+
+
+def leave_group_out(cfg: dict, df: pd.DataFrame, group: pd.Series, groups: list[str] | None = None,
+                    algo: str = "lightgbm") -> pd.DataFrame:
+    """留一组验证（例如留一省份）：用其他组的火训练，在留出组的火上检验。"""
+    from sklearn.metrics import roc_auc_score
+    feats = feature_list(cfg, groups)
+    target = cfg["model"]["target"]
+    keep = np.isfinite(df[target].values)
+    d = df[keep].reset_index(drop=True)
+    g = pd.Series(group.values[keep]).astype(str).values
+    X, y = _xy(d, feats, target)
+    fires = d["fire_id"].values
+    yb = (y >= HIGH_THRESHOLD).astype(int)
+    rows = []
+    for k in np.unique(g):
+        te = g == k
+        if len(np.unique(fires[te])) < 2:
+            continue
+        p = clone(make_model(algo)).fit(X[~te], y[~te]).predict(X[te])
+        fm = per_fire(pd.DataFrame({"fire_id": fires[te], "y": y[te], "pred": p}))
+        rows.append({"held_out": k, "fires": int(fm.shape[0]), "n": int(te.sum()),
+                     "r2_median_per_fire": float(fm["r2"].median()), "r2_pooled": float(r2(y[te], p)),
+                     "auc_high": float(roc_auc_score(yb[te], p)) if len(np.unique(yb[te])) == 2 else np.nan})
+    return pd.DataFrame(rows)
