@@ -268,10 +268,9 @@ def cmd_classify(args, cfg, db):
 def cmd_report(args, cfg, db):
     """扩充火场后的整套对比：三个口径（高烈度 AUC、原始 dNBR 合并 R²、逐场 R²）、分层小模型、留一省份。"""
     dev = load_samples(db, cfg, "dev")
-    meta = pd.DataFrame(db.select("fires", {"select": "fire_id,province,qc", "qc_status": "eq.ok"})).set_index("fire_id")
+    meta = pd.DataFrame(db.select("fires", {"select": "fire_id,province", "qc_status": "eq.ok"})).set_index("fire_id")
     prov = dev["fire_id"].map(meta["province"]).fillna("未知")
     region = prov.map(lambda p: next((r for r, ps in REGIONS.items() if any(k in str(p) for k in ps)), "其他"))
-    area = dev["fire_id"].map(meta["qc"].map(lambda q: (q or {}).get("area_ha") if isinstance(q, dict) else None))
     print(f"开发集：{dev.fire_id.nunique()} 场火，{len(dev)} 个样本")
     print(dev.groupby(prov)["fire_id"].nunique().to_string())
     scen = args.scenario or "prefire"
@@ -293,8 +292,8 @@ def cmd_report(args, cfg, db):
               "常绿程度": pd.cut(dev["evergreen_ratio"], [-np.inf, dev["evergreen_ratio"].median(), np.inf], labels=["偏落叶", "偏常绿"]).astype(str),
               "坡度": pd.cut(dev["slope"], [-np.inf, 15, 25, np.inf], labels=["缓坡<15", "中坡15-25", "陡坡>25"]).astype(str),
               "海拔": pd.cut(dev["elevation"], [-np.inf, 500, 1500, np.inf], labels=["低<500", "中500-1500", "高>1500"]).astype(str)}
-    if area.notna().any():
-        strata["火场规模"] = pd.cut(area.astype(float), [-np.inf, 200, 1000, np.inf], labels=["小<200ha", "中200-1000", "大>1000"]).astype(str)
+    vpd = dev.groupby("fire_id")["fire_vpdmax"].transform("median")
+    strata["火险天气"] = pd.cut(vpd, [-np.inf, vpd.median(), np.inf], labels=["较湿", "较干"]).astype(str)
     out["stratified"] = {}
     for name, s in strata.items():
         r = model.stratified_compare(cfg, dev, s, groups, args.algo)
