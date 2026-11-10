@@ -292,7 +292,7 @@ def stratified_compare(cfg: dict, df: pd.DataFrame, strata: pd.Series, groups: l
     target = cfg["model"]["target"]
     keep = np.isfinite(df[target].values)
     d = df[keep].reset_index(drop=True)
-    s = pd.Series(strata.values[keep]).astype(str).values
+    s = np.array(["缺失" if (v is None or v != v or str(v) == "nan") else str(v) for v in np.asarray(strata, dtype=object)[keep]], dtype=object)
     X, y = _xy(d, feats, target)
     fires = d["fire_id"].values
     pg = np.full(len(d), np.nan); ps = np.full(len(d), np.nan)
@@ -328,7 +328,7 @@ def leave_group_out(cfg: dict, df: pd.DataFrame, group: pd.Series, groups: list[
     target = cfg["model"]["target"]
     keep = np.isfinite(df[target].values)
     d = df[keep].reset_index(drop=True)
-    g = pd.Series(group.values[keep]).astype(str).values
+    g = np.array([str(v) for v in np.asarray(group, dtype=object)[keep]], dtype=object)
     X, y = _xy(d, feats, target)
     fires = d["fire_id"].values
     yb = (y >= HIGH_THRESHOLD).astype(int)
